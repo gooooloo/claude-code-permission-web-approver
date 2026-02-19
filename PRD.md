@@ -58,7 +58,7 @@ A web-based approval UI for Claude Code permission hooks. Provides a browser int
   - Increase the default collapsed height so that at least 15-20 lines are visible without clicking "Show more" (e.g., `max-height: 360px` desktop / `240px` mobile).
   - Plans are typically long and important for decision-making; users should be able to scan most of a plan at a glance.
   - Consider whether plan cards specifically should have a larger default than other card types, or if the increase should apply globally.
-- [ ] **Fix mobile button area height when card has 4 buttons**
+- [x] **Fix mobile button area height when card has 4 buttons**
   - On mobile, when a card has 4 buttons (e.g., Deny / Always Allow / Allow this session / Allow), the button area doesn't have enough height and buttons may overlap or get cut off.
   - Ensure the `.buttons` container wraps properly on small screens and all buttons remain fully visible and tappable.
 - [ ] **Split "Always Allow" for compound Bash commands (pipes and &&)**

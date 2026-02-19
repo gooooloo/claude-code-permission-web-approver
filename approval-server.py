@@ -531,8 +531,8 @@ HTML_PAGE = """<!DOCTYPE html>
     .card-header { flex-wrap: wrap; gap: 6px; }
     .detail { font-size: 12px; }
     .detail.collapsed { max-height: 260px; }
-    .buttons { flex-wrap: wrap; }
-    .buttons button { flex: 1; min-width: 80px; }
+    .buttons { flex-wrap: wrap; gap: 8px; }
+    .buttons button { flex: 1 1 calc(50% - 8px); min-width: 80px; box-sizing: border-box; }
   }
 </style>
 </head>
