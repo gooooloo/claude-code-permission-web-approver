@@ -42,6 +42,46 @@ case "$TOOL_NAME" in
     DETAIL_SUB="$OLD"
     ALLOW_PATTERN="Edit($FILE)"
     ;;
+  ExitPlanMode)
+    # Plan markdown is in tool_input.plan
+    PLAN_CONTENT=$(echo "$TOOL_INPUT" | jq -r '.plan // empty' 2>/dev/null)
+    if [ -n "$PLAN_CONTENT" ]; then
+      DETAIL="$PLAN_CONTENT"
+    else
+      DETAIL="Exit plan mode"
+    fi
+    # allowedPrompts as subtitle
+    DETAIL_SUB=$(echo "$TOOL_INPUT" | jq -r '
+      if .allowedPrompts and (.allowedPrompts | length > 0) then
+        "Requested permissions: " +
+        ([.allowedPrompts[] | "\(.tool): \(.prompt)"] | join(", "))
+      else
+        empty
+      end' 2>/dev/null)
+    ALLOW_PATTERN="ExitPlanMode"
+    ;;
+  AskUserQuestion)
+    # Format questions with their options
+    DETAIL=$(echo "$TOOL_INPUT" | jq -r '
+      if .questions then
+        [.questions[] |
+          "Q: \(.question)\n" +
+          ([.options[] | "  • \(.label) — \(.description)"] | join("\n"))
+        ] | join("\n\n")
+      else
+        empty
+      end' 2>/dev/null)
+    if [ -z "$DETAIL" ]; then
+      # Fallback: try single question field
+      DETAIL=$(echo "$TOOL_INPUT" | jq -r '.questions[0].question // empty' 2>/dev/null)
+    fi
+    if [ -z "$DETAIL" ]; then
+      # Last resort: raw dump
+      DETAIL=$(echo "$TOOL_INPUT" | jq -r 'to_entries | map("\(.key): \(.value)") | join("\n")' 2>/dev/null | head -10)
+    fi
+    DETAIL_SUB=""
+    ALLOW_PATTERN="AskUserQuestion"
+    ;;
   *)
     DETAIL=$(echo "$TOOL_INPUT" | jq -r 'to_entries | map("\(.key): \(.value)") | join("\n")' 2>/dev/null | head -10)
     DETAIL_SUB=""
@@ -87,6 +127,7 @@ ELAPSED=0
 while [ $ELAPSED -lt $TIMEOUT ]; do
   if [ -f "$RESPONSE_FILE" ]; then
     DECISION=$(jq -r '.decision // "deny"' "$RESPONSE_FILE")
+    DENY_MESSAGE=$(jq -r '.message // "User denied via web UI"' "$RESPONSE_FILE")
     # Cleanup
     rm -f "$REQUEST_FILE" "$RESPONSE_FILE"
 
@@ -98,12 +139,12 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
         }
       }'
     else
-      jq -n '{
+      jq -n --arg msg "$DENY_MESSAGE" '{
         hookSpecificOutput: {
           hookEventName: "PermissionRequest",
           decision: {
             behavior: "deny",
-            message: "User denied via web UI"
+            message: $msg
           }
         }
       }'
