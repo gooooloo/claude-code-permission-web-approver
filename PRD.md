@@ -80,3 +80,16 @@ A web-based approval UI for Claude Code permission hooks. Provides a browser int
   - Replace the "Push to GitHub" button with "Clean up this task" (prompt: "Commit the current changes and push to GitHub")
   - Reorder buttons to: "Clean up this task" first, then "/clear", then "Next TODO"
   - "Clean up this task" combines commit + push into one action, which is more useful as a default workflow step
+- [ ] **Fix last line clipping in response textbox on prompt-waiting card**
+  - In the Web UI prompt-waiting card, the response textbox (showing Claude's last response) has a display issue where the last line of text appears partially cut off or clipped by margin/padding.
+  - The bottom of the last line is visually obscured, likely caused by insufficient padding-bottom or margin interference in the response container.
+  - Ensure the last line of the response text is fully visible with proper spacing at the bottom.
+- [ ] **Hide "Show more" button when detail content fits without overflow**
+  - Currently the "Show more" toggle and gradient overlay always appear on collapsed `.detail` areas, even when the content is short enough to fit within the max-height.
+  - Only show the "Show more" button and the fade gradient when the content actually overflows the collapsed container.
+  - Use `scrollHeight > clientHeight` (or similar) to detect overflow and conditionally apply the collapsed state.
+- [ ] **Investigate: support sending images to Claude Code from Web UI**
+  - Research how Claude Code accepts image input (e.g., via stdin, file paths, base64-encoded data, or CLI flags).
+  - Explore whether the stop hook or prompt submission mechanism can pass image data alongside text prompts.
+  - If feasible, design a workflow: user uploads/pastes an image in the Web UI prompt area, and it gets forwarded to Claude Code as part of the next instruction.
+  - Consider mobile use cases (camera capture, photo library) as a primary motivation for this feature.
