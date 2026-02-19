@@ -61,7 +61,7 @@ A web-based approval UI for Claude Code permission hooks. Provides a browser int
 - [x] **Fix mobile button area height when card has 4 buttons**
   - On mobile, when a card has 4 buttons (e.g., Deny / Always Allow / Allow this session / Allow), the button area doesn't have enough height and buttons may overlap or get cut off.
   - Ensure the `.buttons` container wraps properly on small screens and all buttons remain fully visible and tappable.
-- [ ] **Split "Always Allow" for compound Bash commands (pipes and &&)**
+- [x] **Split "Always Allow" for compound Bash commands (pipes and &&)**
   - When a Bash command contains pipes (`|`) or `&&`, the current "Always Allow" button only creates a single allow pattern for the first command.
   - Instead, parse the compound command and offer individual "Always Allow" entries for each sub-command.
   - Example: `foo xxx | bar xxx` → show two allow options: `Bash(foo:*)` and `Bash(bar:*)`.

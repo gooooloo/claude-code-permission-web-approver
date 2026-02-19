@@ -15,19 +15,33 @@ TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // "Unknown"')
 TOOL_INPUT=$(echo "$INPUT" | jq -r '.tool_input // {}')
 
 # Build detail text and allow pattern per tool type
+ALLOW_PATTERNS_JSON="[]"
 case "$TOOL_NAME" in
   Bash|mcp__acp__Bash)
     COMMAND=$(echo "$TOOL_INPUT" | jq -r '.command // ""')
     DETAIL="$COMMAND"
     DETAIL_SUB=""
-    FIRST_LINE=$(echo "$COMMAND" | head -1)
-    BASE_CMD=$(echo "$FIRST_LINE" | awk '{print $1}' | xargs basename 2>/dev/null)
-    SUB_CMD=$(echo "$FIRST_LINE" | tr ' ' '\n' | tail -n +2 | grep -v '^[-/\.]' | head -1)
-    if [ -n "$SUB_CMD" ]; then
-      ALLOW_PATTERN="Bash($BASE_CMD $SUB_CMD:*)"
-    else
-      ALLOW_PATTERN="Bash($BASE_CMD:*)"
-    fi
+    # Parse compound commands (pipes and &&) into individual allow patterns
+    # Split on | and && to get individual commands
+    echo "$COMMAND" | sed 's/&&/\n/g; s/|/\n/g' | while IFS= read -r SUBCMD; do
+      SUBCMD=$(echo "$SUBCMD" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+      [ -z "$SUBCMD" ] && continue
+      SCMD_FIRST=$(echo "$SUBCMD" | head -1)
+      SCMD_BASE=$(echo "$SCMD_FIRST" | awk '{print $1}' | xargs basename 2>/dev/null)
+      [ -z "$SCMD_BASE" ] && continue
+      SCMD_SUB=$(echo "$SCMD_FIRST" | tr ' ' '\n' | tail -n +2 | grep -v '^[-/\.]' | head -1)
+      if [ -n "$SCMD_SUB" ]; then
+        PAT="Bash($SCMD_BASE $SCMD_SUB:*)"
+      else
+        PAT="Bash($SCMD_BASE:*)"
+      fi
+      echo "$PAT"
+    done | sort -u > /tmp/claude_patterns_$$
+    PATTERNS_ARRAY=$(jq -R -s 'split("\n") | map(select(length > 0))' < /tmp/claude_patterns_$$)
+    rm -f /tmp/claude_patterns_$$
+    ALLOW_PATTERNS_JSON="$PATTERNS_ARRAY"
+    # First pattern is the primary allow_pattern
+    ALLOW_PATTERN=$(echo "$PATTERNS_ARRAY" | jq -r '.[0] // ""')
     ;;
   Write|mcp__acp__Write)
     FILE=$(echo "$TOOL_INPUT" | jq -r '.file_path // ""')
@@ -105,6 +119,7 @@ jq -n \
   --arg detail "$DETAIL" \
   --arg detail_sub "$DETAIL_SUB" \
   --arg allow_pattern "$ALLOW_PATTERN" \
+  --argjson allow_patterns "$ALLOW_PATTERNS_JSON" \
   --arg settings_file "$SETTINGS_FILE" \
   --arg timestamp "$(date +%s)" \
   --arg pid "$$" \
@@ -117,6 +132,7 @@ jq -n \
     detail: $detail,
     detail_sub: $detail_sub,
     allow_pattern: $allow_pattern,
+    allow_patterns: $allow_patterns,
     settings_file: $settings_file,
     timestamp: ($timestamp | tonumber),
     pid: ($pid | tonumber),

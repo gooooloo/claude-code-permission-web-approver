@@ -546,6 +546,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <script>
 let knownIds = new Set();
 let respondedIds = new Set();
+let lastPending = [];
 
 function toolCategory(name) {
   if (name === 'ExitPlanMode') return 'plan';
@@ -744,6 +745,7 @@ async function dismissPrompt(id, btn) {
 }
 
 function renderRequests(requests) {
+  lastPending = requests;
   const container = document.getElementById('requests');
   if (requests.length === 0) {
     container.innerHTML = '<div class="empty"><span class="dot"></span>Waiting for permission requests...</div>';
@@ -813,12 +815,14 @@ function renderRequests(requests) {
           <div class="project-path">${esc(req.project_dir || '')}</div>
           <div class="detail">${detailHtml}</div>
           ${req.detail_sub ? '<div class="detail" style="margin-top:8px;color:#aaa;font-size:12px">' + esc(req.detail_sub) + '</div>' : ''}
-          <div class="allow-info">"Always Allow" will apply to: <code>${esc(req.allow_pattern)}</code></div>
+          ${renderAllowInfo(req)}
           ${['Read','Edit','Write'].includes(req.tool_name) ? '<div class="allow-info">"Allow this session" will auto-approve all <code>' + esc(req.tool_name) + '</code> calls in session ' + esc(String(req.session_id)) + '</div>' : ''}
           ${['Edit','Write'].includes(req.tool_name) ? '<div class="path-select-area" id="path-area-' + req.id + '" style="display:none"></div>' : ''}
+          ${hasSplitPatterns(req) ? '<div class="path-select-area" id="split-area-' + req.id + '" style="display:none"></div>' : ''}
           <div class="buttons">
             <button class="${denyClass}" onclick="respond('${req.id}','deny',this)">Deny</button>
-            <button class="btn-always" onclick="respond('${req.id}','always',this)">Always Allow</button>
+            <button class="btn-always" onclick="${hasSplitPatterns(req) ? 'respondAlwaysAllPatterns(\\'' + req.id + '\\',this)' : 'respond(\\'' + req.id + '\\',\\'always\\',this)'}">Always Allow${hasSplitPatterns(req) ? ' All' : ''}</button>
+            ${hasSplitPatterns(req) ? '<button class="btn-always" style="background:#0d9488" onclick="toggleSplitPatterns(\\'' + req.id + '\\')">Allow Command...</button>' : ''}
             ${['Edit','Write'].includes(req.tool_name) ? '<button class="btn-allow-path" onclick="togglePathSelect(\\'' + req.id + '\\')">Allow Path</button>' : ''}
             ${['Read','Edit','Write'].includes(req.tool_name) ? '<button class="btn-session" onclick="respondSessionAllow(\\'' + req.id + '\\',\\'' + req.session_id + '\\',\\'' + req.tool_name + '\\',this)">Allow this session</button>' : ''}
             <button class="${allowClass}" onclick="respond('${req.id}','allow',this)">Allow</button>
@@ -829,6 +833,57 @@ function renderRequests(requests) {
     }
   });
   knownIds = currentIds;
+}
+
+function hasSplitPatterns(req) {
+  return req.allow_patterns && Array.isArray(req.allow_patterns) && req.allow_patterns.length > 1;
+}
+
+function renderAllowInfo(req) {
+  if (hasSplitPatterns(req)) {
+    return '<div class="allow-info">"Always Allow All" will apply to: ' +
+      req.allow_patterns.map(p => '<code>' + esc(p) + '</code>').join(', ') + '</div>';
+  }
+  return '<div class="allow-info">"Always Allow" will apply to: <code>' + esc(req.allow_pattern) + '</code></div>';
+}
+
+function toggleSplitPatterns(reqId) {
+  const area = document.getElementById('split-area-' + reqId);
+  if (area.style.display !== 'none') { area.style.display = 'none'; return; }
+  const card = document.getElementById('card-' + reqId);
+  const req = lastPending.find(r => r.id === reqId);
+  if (!req || !req.allow_patterns) return;
+  let html = '';
+  req.allow_patterns.forEach(pat => {
+    html += '<div class="path-option" onclick="submitPathAllow(\'' + reqId + '\',\'' + esc(pat).replace(/'/g, "\\\\'") + '\')">'
+      + '<div class="path-label">Allow: <code>' + esc(pat) + '</code></div>'
+      + '</div>';
+  });
+  area.innerHTML = html;
+  area.style.display = 'block';
+}
+
+async function respondAlwaysAllPatterns(reqId, btn) {
+  const card = document.getElementById('card-' + reqId);
+  const buttons = card.querySelectorAll('button');
+  buttons.forEach(b => b.disabled = true);
+  btn.textContent = '...';
+  const req = lastPending.find(r => r.id === reqId);
+  const patterns = (req && req.allow_patterns) || [];
+  try {
+    // Send all patterns; server will add each to settings
+    await fetch('/api/respond', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: reqId, decision: 'always', allow_patterns: patterns})
+    });
+    respondedIds.add(reqId);
+    knownIds.delete(reqId);
+    card.remove();
+  } catch (e) {
+    buttons.forEach(b => b.disabled = false);
+    btn.textContent = 'Error';
+  }
 }
 
 async function respond(id, decision, btn, message) {
@@ -1241,10 +1296,16 @@ class ApprovalHandler(BaseHTTPRequestHandler):
                     with open(request_file) as f:
                         req_data = json.load(f)
                     settings_file = req_data.get("settings_file", "")
-                    # Allow client to override the pattern (e.g., directory-level Allow Path)
-                    allow_pattern = body.get("allow_pattern") or req_data.get("allow_pattern", "")
-                    if settings_file and allow_pattern:
-                        self._add_to_settings(settings_file, allow_pattern)
+                    # Support multiple patterns (compound Bash commands)
+                    allow_patterns = body.get("allow_patterns") or []
+                    if not allow_patterns:
+                        # Single pattern: client override or from request data
+                        allow_pattern = body.get("allow_pattern") or req_data.get("allow_pattern", "")
+                        if allow_pattern:
+                            allow_patterns = [allow_pattern]
+                    if settings_file:
+                        for pattern in allow_patterns:
+                            self._add_to_settings(settings_file, pattern)
                 except (json.JSONDecodeError, IOError):
                     pass
 
