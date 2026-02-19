@@ -587,7 +587,7 @@ function esc(s) {
 }
 
 function renderMarkdown(text) {
-  let s = esc(text);
+  let s = esc(text.trim());
   // Headers
   s = s.replace(/^### (.+)$/gm, '<span class="md-h3">$1</span>');
   s = s.replace(/^## (.+)$/gm, '<span class="md-h2">$1</span>');
@@ -666,7 +666,7 @@ function renderPromptCard(req, time) {
   let responseHtml = '';
   if (req.last_response) {
     responseHtml = `
-      <div class="detail collapsed" id="prompt-response-${req.id}">${renderMarkdown(req.last_response)}</div>`;
+      <div class="detail" id="prompt-response-${req.id}">${renderMarkdown(req.last_response)}</div>`;
   }
   return `
     <div class="card-header">
