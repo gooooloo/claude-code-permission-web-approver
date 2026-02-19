@@ -88,11 +88,18 @@ A web-based approval UI for Claude Code permission hooks. Provides a browser int
   - Currently the "Show more" toggle and gradient overlay always appear on collapsed `.detail` areas, even when the content is short enough to fit within the max-height.
   - Only show the "Show more" button and the fade gradient when the content actually overflows the collapsed container.
   - Use `scrollHeight > clientHeight` (or similar) to detect overflow and conditionally apply the collapsed state.
-- [ ] **Investigate: support sending images to Claude Code from Web UI**
+- [x] **Investigate: support sending images to Claude Code from Web UI**
   - Research how Claude Code accepts image input (e.g., via stdin, file paths, base64-encoded data, or CLI flags).
   - Explore whether the stop hook or prompt submission mechanism can pass image data alongside text prompts.
   - If feasible, design a workflow: user uploads/pastes an image in the Web UI prompt area, and it gets forwarded to Claude Code as part of the next instruction.
   - Consider mobile use cases (camera capture, photo library) as a primary motivation for this feature.
+  - **Finding:** Claude Code CLI does not support images via stdin, hooks, or CLI flags. Only interactive mode supports images (drag-drop, Ctrl+V, file path references). The stop hook `reason` field is text-only.
+  - **Workaround:** Web UI uploads image → Python server saves to `/tmp/claude-images/` → prompt text prepends file path reference (e.g., "Please look at this image: /tmp/claude-images/xxx.png") → Claude Code uses Read tool to view the image.
+- [x] **Implement image upload in Web UI prompt area**
+  - Add image upload button and paste handler to the prompt-waiting card
+  - Server endpoint to receive and save uploaded images to `/tmp/claude-images/`
+  - Prepend file path reference to the user's text prompt before submitting
+  - Support mobile use cases (camera capture, photo library upload)
 - [ ] *(on hold)* **Add TODO management in Web UI independent of Claude Code session**
   - Problem: Currently adding TODOs to PRD.md requires going through Claude Code, which means the user cannot add new ideas while Claude is busy working on a task.
   - Add a TODO management section in the Web UI where users can add, view, and reorder TODO items at any time, regardless of whether Claude Code is idle or busy.
@@ -107,3 +114,6 @@ A web-based approval UI for Claude Code permission hooks. Provides a browser int
 - [x] **Bug: "Allow Path" button click has no effect in Web UI**
   - When clicking the "Allow Path" option on Write/Edit tool approval cards, nothing happens.
   - Investigate why the click handler is not working and fix the issue.
+- [ ] **Bug: Fetch permission requests not displayed in Web UI**
+  - When Claude Code requests permission to fetch a URL (e.g., WebFetch), the approval prompt appears in the terminal but not in the Web UI.
+  - Investigate whether the Fetch tool goes through the permission hook system and ensure it is rendered as a card in the Web UI.

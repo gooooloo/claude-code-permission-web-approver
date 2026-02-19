@@ -16,9 +16,12 @@ import signal
 import time
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
+import uuid
+import cgi
 
 QUEUE_DIR = "/tmp/claude-approvals"
+IMAGE_DIR = "/tmp/claude-images"
 PORT = 19836
 
 # Session-level auto-allow rules: { (session_id, tool_name): True }
@@ -463,6 +466,57 @@ HTML_PAGE = """<!DOCTYPE html>
     border-color: #10b981;
   }
   .prompt-input::placeholder { color: #555; }
+  .image-upload-area {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .btn-upload-image {
+    background: #1e293b;
+    border: 1px dashed #444;
+    color: #a78bfa;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .btn-upload-image:hover { border-color: #a78bfa; }
+  .image-preview-area {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .image-thumb {
+    position: relative;
+    width: 60px;
+    height: 60px;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid #333;
+  }
+  .image-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .image-thumb .remove-btn {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    width: 18px;
+    height: 18px;
+    background: #ef4444;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    font-size: 11px;
+    line-height: 18px;
+    text-align: center;
+    cursor: pointer;
+    padding: 0;
+  }
   .quick-actions {
     display: flex;
     gap: 8px;
@@ -683,6 +737,11 @@ function renderPromptCard(req, time) {
       <button class="btn-quick" onclick="quickPrompt('${req.id}','/clear')">/clear</button>
       <button class="btn-quick" onclick="quickPrompt('${req.id}','Implement the next TODO item from PRD.md')">Next TODO</button>
     </div>
+    <div class="image-upload-area">
+      <input type="file" id="image-file-${req.id}" accept="image/*" style="display:none" onchange="handleImageFile('${req.id}',this)">
+      <button class="btn-upload-image" onclick="document.getElementById('image-file-${req.id}').click()">+ Image</button>
+      <div class="image-preview-area" id="image-preview-${req.id}"></div>
+    </div>
     <textarea class="prompt-input" id="prompt-input-${req.id}" placeholder="Type your next instruction for Claude..." rows="3"></textarea>
     <div class="buttons">
       <button class="btn-dismiss" onclick="dismissPrompt('${req.id}',this)">Dismiss</button>
@@ -707,10 +766,60 @@ async function quickPrompt(id, prompt) {
   }
 }
 
+const imagePathsMap = {};
+
+async function handleImageFile(reqId, input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  await uploadImage(reqId, file);
+  input.value = '';
+}
+
+async function uploadImage(reqId, file) {
+  const formData = new FormData();
+  formData.append('image', file);
+  try {
+    const resp = await fetch('/api/upload-image', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (data.path) {
+      if (!imagePathsMap[reqId]) imagePathsMap[reqId] = [];
+      imagePathsMap[reqId].push(data.path);
+      renderImagePreviews(reqId);
+    }
+  } catch (e) {
+    console.error('Image upload failed:', e);
+  }
+}
+
+function renderImagePreviews(reqId) {
+  const area = document.getElementById('image-preview-' + reqId);
+  if (!area) return;
+  const paths = imagePathsMap[reqId] || [];
+  area.innerHTML = paths.map((p, i) =>
+    '<div class="image-thumb">' +
+    '<img src="/api/image?path=' + encodeURIComponent(p) + '">' +
+    '<button class="remove-btn" onclick="removeImage(\\'' + reqId + '\\',' + i + ')">x</button>' +
+    '</div>'
+  ).join('');
+}
+
+function removeImage(reqId, index) {
+  if (imagePathsMap[reqId]) {
+    imagePathsMap[reqId].splice(index, 1);
+    renderImagePreviews(reqId);
+  }
+}
+
 async function submitPrompt(id) {
   const input = document.getElementById('prompt-input-' + id);
-  const prompt = input ? input.value.trim() : '';
-  if (!prompt) { if (input) input.focus(); return; }
+  let prompt = input ? input.value.trim() : '';
+  const images = imagePathsMap[id] || [];
+  if (!prompt && images.length === 0) { if (input) input.focus(); return; }
+  // Prepend image file path references
+  if (images.length > 0) {
+    const imgRefs = images.map(p => 'Please look at this image: ' + p).join('\\n');
+    prompt = imgRefs + (prompt ? '\\n\\n' + prompt : '');
+  }
   const card = document.getElementById('card-' + id);
   card.querySelectorAll('button, textarea').forEach(el => el.disabled = true);
   try {
@@ -719,6 +828,7 @@ async function submitPrompt(id) {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({id, prompt})
     });
+    delete imagePathsMap[id];
     respondedIds.add(id);
     knownIds.delete(id);
     card.remove();
@@ -778,6 +888,21 @@ function renderRequests(requests) {
 
       if (isPrompt) {
         card.innerHTML = renderPromptCard(req, time);
+        // Setup paste handler for image paste
+        const ta = card.querySelector('.prompt-input');
+        if (ta) {
+          ta.addEventListener('paste', (e) => {
+            const items = e.clipboardData && e.clipboardData.items;
+            if (!items) return;
+            for (const item of items) {
+              if (item.type.startsWith('image/')) {
+                e.preventDefault();
+                uploadImage(req.id, item.getAsFile());
+                return;
+              }
+            }
+          });
+        }
       } else if (cat === 'plan') {
         // Plan-specific layout matching Claude Code CLI
         card.innerHTML = `
@@ -1259,6 +1384,22 @@ class ApprovalHandler(BaseHTTPRequestHandler):
                 except (json.JSONDecodeError, IOError):
                     continue
             self.wfile.write(json.dumps({"requests": requests}).encode())
+        elif self.path.startswith("/api/image"):
+            # Serve uploaded image for preview
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+            img_path = params.get("path", [""])[0]
+            if not img_path or not img_path.startswith(IMAGE_DIR) or not os.path.isfile(img_path):
+                self.send_error(404)
+                return
+            ext = os.path.splitext(img_path)[1].lower()
+            content_types = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
+            ct = content_types.get(ext, "application/octet-stream")
+            self.send_response(200)
+            self.send_header("Content-Type", ct)
+            self.end_headers()
+            with open(img_path, "rb") as f:
+                self.wfile.write(f.read())
         else:
             self.send_error(404)
 
@@ -1360,6 +1501,31 @@ class ApprovalHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({"ok": True}).encode())
+        elif self.path == "/api/upload-image":
+            os.makedirs(IMAGE_DIR, exist_ok=True)
+            content_type = self.headers.get("Content-Type", "")
+            if "multipart/form-data" in content_type:
+                form = cgi.FieldStorage(
+                    fp=self.rfile,
+                    headers=self.headers,
+                    environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": content_type}
+                )
+                file_item = form["image"]
+                if file_item.filename:
+                    ext = os.path.splitext(file_item.filename)[1].lower() or ".png"
+                    filename = str(uuid.uuid4()) + ext
+                    filepath = os.path.join(IMAGE_DIR, filename)
+                    with open(filepath, "wb") as f:
+                        f.write(file_item.file.read())
+                    print(f"[img] Saved image: {filepath}")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"ok": True, "path": filepath}).encode())
+                else:
+                    self.send_error(400, "No file uploaded")
+            else:
+                self.send_error(400, "Expected multipart/form-data")
         else:
             self.send_error(404)
 
