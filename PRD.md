@@ -76,3 +76,7 @@ A web-based approval UI for Claude Code permission hooks. Provides a browser int
   - When an ExitPlanMode approval card is shown in the Web UI, add a keyboard shortcut (Shift+Tab) or button that triggers the "Clear context and edit" action.
   - This mirrors the Shift+Tab behavior available in the Claude Code CLI terminal.
   - Allows the user to clear the current context and re-edit the plan directly from the Web UI without switching back to the terminal.
+- [ ] **Update quick-action buttons: replace "Push to GitHub" with "Clean up this task" and reorder**
+  - Replace the "Push to GitHub" button with "Clean up this task" (prompt: "Commit the current changes and push to GitHub")
+  - Reorder buttons to: "Clean up this task" first, then "/clear", then "Next TODO"
+  - "Clean up this task" combines commit + push into one action, which is more useful as a default workflow step
