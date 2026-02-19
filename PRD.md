@@ -93,7 +93,7 @@ A web-based approval UI for Claude Code permission hooks. Provides a browser int
   - Explore whether the stop hook or prompt submission mechanism can pass image data alongside text prompts.
   - If feasible, design a workflow: user uploads/pastes an image in the Web UI prompt area, and it gets forwarded to Claude Code as part of the next instruction.
   - Consider mobile use cases (camera capture, photo library) as a primary motivation for this feature.
-- [ ] **Add TODO management in Web UI independent of Claude Code session**
+- [ ] *(on hold)* **Add TODO management in Web UI independent of Claude Code session**
   - Problem: Currently adding TODOs to PRD.md requires going through Claude Code, which means the user cannot add new ideas while Claude is busy working on a task.
   - Add a TODO management section in the Web UI where users can add, view, and reorder TODO items at any time, regardless of whether Claude Code is idle or busy.
   - Possible approaches:
