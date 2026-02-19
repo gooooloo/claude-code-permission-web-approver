@@ -14,6 +14,7 @@ import glob
 import os
 import signal
 import time
+import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs
 
@@ -22,6 +23,36 @@ PORT = 19836
 
 # Session-level auto-allow rules: { (session_id, tool_name): True }
 session_auto_allow = {}
+
+
+def check_auto_allow():
+    """Scan pending requests and auto-approve those matching session auto-allow rules."""
+    for path in glob.glob(os.path.join(QUEUE_DIR, "*.request.json")):
+        resp_path = path.replace(".request.json", ".response.json")
+        if os.path.exists(resp_path):
+            continue
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            continue
+        sid = str(data.get("session_id", ""))
+        tname = data.get("tool_name", "")
+        if (sid, tname) in session_auto_allow:
+            try:
+                with open(resp_path, "w") as f:
+                    json.dump({"decision": "allow"}, f)
+                print(f"[~] Auto-allowed {tname} for session {sid}")
+            except IOError:
+                pass
+
+
+def auto_allow_loop():
+    """Background thread: periodically check for auto-allowable requests."""
+    while True:
+        if session_auto_allow:
+            check_auto_allow()
+        time.sleep(0.5)
 
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="en">
@@ -899,6 +930,8 @@ class ApprovalHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
+            # Run auto-allow check so the UI also reflects latest state
+            check_auto_allow()
             requests = []
             for path in sorted(glob.glob(os.path.join(QUEUE_DIR, "*.request.json"))):
                 try:
@@ -912,14 +945,6 @@ class ApprovalHandler(BaseHTTPRequestHandler):
                     pid = data.get("pid")
                     if pid and not _is_pid_alive(pid):
                         os.remove(path)
-                        continue
-                    # Auto-approve if session auto-allow rule matches
-                    sid = str(data.get("session_id", ""))
-                    tname = data.get("tool_name", "")
-                    if (sid, tname) in session_auto_allow:
-                        with open(resp_path, "w") as f:
-                            json.dump({"decision": "allow"}, f)
-                        print(f"[~] Auto-allowed {tname} for session {sid}")
                         continue
                     requests.append(data)
                 except (json.JSONDecodeError, IOError):
@@ -1015,6 +1040,9 @@ class ApprovalHandler(BaseHTTPRequestHandler):
 
 def main():
     os.makedirs(QUEUE_DIR, exist_ok=True)
+    # Start background thread for auto-allow checks (independent of web UI)
+    t = threading.Thread(target=auto_allow_loop, daemon=True)
+    t.start()
     server = HTTPServer(("0.0.0.0", PORT), ApprovalHandler)
     print(f"Claude Code Approval Server running on http://localhost:{PORT}")
     print(f"Watching: {QUEUE_DIR}")
