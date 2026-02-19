@@ -93,3 +93,14 @@ A web-based approval UI for Claude Code permission hooks. Provides a browser int
   - Explore whether the stop hook or prompt submission mechanism can pass image data alongside text prompts.
   - If feasible, design a workflow: user uploads/pastes an image in the Web UI prompt area, and it gets forwarded to Claude Code as part of the next instruction.
   - Consider mobile use cases (camera capture, photo library) as a primary motivation for this feature.
+- [ ] **Add TODO management in Web UI independent of Claude Code session**
+  - Problem: Currently adding TODOs to PRD.md requires going through Claude Code, which means the user cannot add new ideas while Claude is busy working on a task.
+  - Add a TODO management section in the Web UI where users can add, view, and reorder TODO items at any time, regardless of whether Claude Code is idle or busy.
+  - Possible approaches:
+    - Web UI directly edits PRD.md (append new TODOs to the file) without involving Claude Code
+    - A separate TODO storage (e.g., a JSON file) that Claude reads when starting a new task
+    - A dedicated API endpoint on the approval server for CRUD operations on TODOs
+  - The key requirement is decoupling: adding a TODO should never block on or interfere with an in-progress Claude Code session.
+- [ ] **Increase spacing between "Show more" button and quick-action buttons (e.g., /clear)**
+  - On mobile especially, the "Show more" toggle and quick-action buttons like "/clear" are too close together, leading to accidental taps.
+  - Add more vertical margin/padding between the detail section (including its "Show more" button) and the quick-action button area to prevent mis-taps.
