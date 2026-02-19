@@ -101,6 +101,6 @@ A web-based approval UI for Claude Code permission hooks. Provides a browser int
     - A separate TODO storage (e.g., a JSON file) that Claude reads when starting a new task
     - A dedicated API endpoint on the approval server for CRUD operations on TODOs
   - The key requirement is decoupling: adding a TODO should never block on or interfere with an in-progress Claude Code session.
-- [ ] **Increase spacing between "Show more" button and quick-action buttons (e.g., /clear)**
+- [x] **Increase spacing between "Show more" button and quick-action buttons (e.g., /clear)**
   - On mobile especially, the "Show more" toggle and quick-action buttons like "/clear" are too close together, leading to accidental taps.
   - Add more vertical margin/padding between the detail section (including its "Show more" button) and the quick-action button area to prevent mis-taps.

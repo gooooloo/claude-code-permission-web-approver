@@ -191,7 +191,7 @@ HTML_PAGE = """<!DOCTYPE html>
     font-size: 12px;
     cursor: pointer;
     padding: 4px 0;
-    margin-bottom: 10px;
+    margin-bottom: 18px;
     font-weight: 600;
   }
   .detail-toggle:hover { color: #c4b5fd; }
