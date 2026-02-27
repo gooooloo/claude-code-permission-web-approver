@@ -1,17 +1,15 @@
 #!/bin/bash
 # Installer for Claude Code WebUI hooks
 #
-# Run this script from the root of a project to install the web-approval hooks.
-# It does two things:
-#   1. Creates symlinks in ~/.claude/hooks/ pointing to the hook scripts in this repo
-#   2. Merges (or creates) a settings.json with hook configuration that tells Claude Code
-#      to call these scripts on PermissionRequest, PostToolUse, Stop, UserPromptSubmit,
-#      SessionStart, and SessionEnd events
+# Installs hook configuration and symlinks for the web-approval UI.
+# Requires an explicit scope argument — no default behavior.
 #
-# By default, hooks are installed into the project's .claude/settings.json.
-# Use --global to install into ~/.claude/settings.json (applies to all projects).
+# Scopes:
+#   --project  Install hooks into <cwd>/.claude/settings.json (project-level only)
+#   --global   Install hooks into ~/.claude/settings.json + create symlinks in ~/.claude/hooks/
+#   --all      Do both --project and --global
 #
-# Usage: /path/to/install.sh [--global]   (run from project root, or anywhere with --global)
+# Usage: /path/to/install.sh --project|--global|--all
 # Deps:  jq
 
 set -e
@@ -20,20 +18,24 @@ SHARED_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(pwd)"
 HOOKS_DIR="$HOME/.claude/hooks"
 
-GLOBAL_MODE=false
-if [ "$1" = "--global" ]; then
-  GLOBAL_MODE=true
-  SETTINGS_FILE="$HOME/.claude/settings.json"
-else
-  SETTINGS_FILE="$PROJECT_DIR/.claude/settings.json"
-fi
+usage() {
+  echo "Usage: $0 --project|--global|--all"
+  echo ""
+  echo "  --project  Install hooks into <cwd>/.claude/settings.json"
+  echo "  --global   Install hooks into ~/.claude/settings.json + symlinks"
+  echo "  --all      Install both project and global"
+  exit 1
+}
 
-# Create symlinks in ~/.claude/hooks/ so settings.json doesn't contain user-specific paths
-mkdir -p "$HOOKS_DIR"
-for script in permission-request.sh post-tool-use.sh stop.sh user-prompt-submit.sh session-start.sh session-end.sh; do
-  ln -sf "$SHARED_DIR/$script" "$HOOKS_DIR/$script"
-done
-echo "Symlinked hooks to: $HOOKS_DIR"
+DO_PROJECT=false
+DO_GLOBAL=false
+
+case "${1:-}" in
+  --project) DO_PROJECT=true ;;
+  --global)  DO_GLOBAL=true ;;
+  --all)     DO_PROJECT=true; DO_GLOBAL=true ;;
+  *)         usage ;;
+esac
 
 # Use $HOME in commands so settings.json is portable (no hardcoded username/paths)
 HOOKS_CONFIG='{
@@ -111,27 +113,41 @@ HOOKS_CONFIG='{
   ]
 }'
 
-if [ "$GLOBAL_MODE" = true ]; then
-  mkdir -p "$HOME/.claude"
-else
-  mkdir -p "$PROJECT_DIR/.claude"
-fi
+install_symlinks() {
+  mkdir -p "$HOOKS_DIR"
+  for script in permission-request.sh post-tool-use.sh stop.sh user-prompt-submit.sh session-start.sh session-end.sh; do
+    ln -sf "$SHARED_DIR/$script" "$HOOKS_DIR/$script"
+  done
+  echo "Symlinked hooks to: $HOOKS_DIR"
+}
 
-if [ -f "$SETTINGS_FILE" ]; then
-  # Merge hooks into existing settings
-  EXISTING=$(cat "$SETTINGS_FILE")
-  echo "$EXISTING" | jq --argjson hooks "$HOOKS_CONFIG" '.hooks = $hooks' > "$SETTINGS_FILE.tmp" && mv "$SETTINGS_FILE.tmp" "$SETTINGS_FILE"
-  echo "Updated: $SETTINGS_FILE"
-else
-  # Create new settings file
-  echo "$HOOKS_CONFIG" | jq '{hooks: .}' > "$SETTINGS_FILE"
-  echo "Created: $SETTINGS_FILE"
-fi
+install_settings() {
+  local settings_file="$1"
+  local settings_dir
+  settings_dir="$(dirname "$settings_file")"
 
-if [ "$GLOBAL_MODE" = true ]; then
+  mkdir -p "$settings_dir"
+
+  if [ -f "$settings_file" ]; then
+    EXISTING=$(cat "$settings_file")
+    echo "$EXISTING" | jq --argjson hooks "$HOOKS_CONFIG" '.hooks = $hooks' > "$settings_file.tmp" && mv "$settings_file.tmp" "$settings_file"
+    echo "Updated: $settings_file"
+  else
+    echo "$HOOKS_CONFIG" | jq '{hooks: .}' > "$settings_file"
+    echo "Created: $settings_file"
+  fi
+}
+
+if [ "$DO_GLOBAL" = true ]; then
+  install_symlinks
+  install_settings "$HOME/.claude/settings.json"
   echo "WebUI hooks installed globally (all projects)"
-else
+fi
+
+if [ "$DO_PROJECT" = true ]; then
+  install_settings "$PROJECT_DIR/.claude/settings.json"
   echo "WebUI hooks installed for: $PROJECT_DIR"
 fi
+
 echo "Start the server: python3 $SHARED_DIR/server.py"
 echo "Then open: http://localhost:19836"

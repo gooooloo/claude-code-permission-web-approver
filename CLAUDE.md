@@ -17,7 +17,8 @@ A web UI for Claude Code that replaces default terminal prompts with a browser-b
 - **user-prompt-submit.sh** — `UserPromptSubmit` hook. Cleans up `.prompt-waiting.json` files when user submits a prompt.
 - **session-start.sh** — `SessionStart` hook. Notifies the server on session start/reset (startup, resume, clear, compact) so it can clear stale requests and session auto-allow rules.
 - **session-end.sh** — `SessionEnd` hook. Aggressively cleans up when a session terminates: notifies the server to clear auto-allow rules and delete all files for this session, with local fallback cleanup if the server is offline.
-- **install.sh** — Installs symlinks and merges hook config into a project's `.claude/settings.json` (or `~/.claude/settings.json` with `--global`).
+- **install.sh** — Installs symlinks and merges hook config into settings.json. Requires `--project`, `--global`, or `--all`.
+- **uninstall.sh** — Reverses install.sh: removes hook config from settings.json and (for global scope) removes symlinks. Same `--project`/`--global`/`--all` interface.
 
 ## Running
 
@@ -25,11 +26,15 @@ A web UI for Claude Code that replaces default terminal prompts with a browser-b
 # Start the server
 ./server.py
 
-# Install hooks into a project
-/path/to/install.sh
+# Install hooks (pick a scope)
+/path/to/install.sh --project   # Project-level only
+/path/to/install.sh --global    # Global (~/.claude) + symlinks
+/path/to/install.sh --all       # Both project + global
 
-# Or install hooks globally (all projects)
-/path/to/install.sh --global
+# Uninstall hooks
+/path/to/uninstall.sh --project
+/path/to/uninstall.sh --global
+/path/to/uninstall.sh --all
 ```
 
 No build step, no test suite, no linter. Dependencies: Python 3, Bash, `jq`, `curl`, `uuidgen`.
