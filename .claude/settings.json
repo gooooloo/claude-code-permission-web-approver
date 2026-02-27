@@ -59,6 +59,18 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/session-end.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }
