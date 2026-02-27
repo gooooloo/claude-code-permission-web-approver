@@ -23,7 +23,7 @@ Claude Code                          Web browser
       |   (allow or deny)                 |
 ```
 
-**Prompt submission flow (when Claude is idle):**
+**Prompt submission flow (non-tmux mode):**
 ```
 Claude Code                          Web browser
       |                                   |
@@ -38,6 +38,22 @@ Claude Code                          Web browser
       |                                   |
       |<-- hook reads response            |
       |   (blocks stop, passes prompt)    |
+```
+
+**Prompt submission flow (tmux mode):**
+```
+Claude Code                          Web browser
+      |                                   |
+      |-- Stop hook fires                 |
+      |   (stop.sh)                       |
+      |   writes .prompt-waiting.json     |
+      |   approves immediately            |
+      |                                   |
+      |          server.py                |
+      |          shows prompt input  ---> |  User types new prompt
+      |                                   |  clicks Submit
+      |                                   |
+      |<-- tmux send-keys delivers prompt |
 ```
 
 ### Components
