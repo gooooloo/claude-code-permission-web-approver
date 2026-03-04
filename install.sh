@@ -82,7 +82,7 @@ HOOKS_CONFIG='{
   ],
   "Stop": [
     {
-      "matcher": "*",
+      "matcher": ".*",
       "hooks": [
         {
           "type": "command",
