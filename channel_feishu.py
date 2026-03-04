@@ -17,14 +17,32 @@ import os
 import re
 import threading
 import time
+import urllib.request
 
 QUEUE_DIR = "/tmp/claude-webui"
+_SERVER_BASE = "http://127.0.0.1:19836"
 _SAFE_ID_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
 
 
 def _is_safe_id(request_id):
     """Validate request_id contains only safe characters (no path traversal)."""
     return bool(request_id) and bool(_SAFE_ID_RE.match(request_id))
+
+
+def _server_post(path, body):
+    """POST JSON to the local WebUI server. Returns True on success."""
+    try:
+        data = json.dumps(body).encode()
+        req = urllib.request.Request(
+            f"{_SERVER_BASE}{path}",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status == 200
+    except Exception as e:
+        print(f"[feishu] Server API {path} failed: {e}")
+        return False
 
 
 def _write_exclusive(filepath, data):
@@ -420,7 +438,7 @@ def _handle_message(data):
     if not text:
         return
 
-    # Find the most recent prompt-waiting file and submit the prompt
+    # Find the most recent prompt-waiting file and submit via server API
     prompt_files = sorted(
         glob.glob(os.path.join(QUEUE_DIR, "*.prompt-waiting.json")),
         key=os.path.getmtime,
@@ -429,24 +447,18 @@ def _handle_message(data):
 
     for wf in prompt_files:
         request_id = os.path.basename(wf).replace(".prompt-waiting.json", "")
-        response_file = os.path.join(QUEUE_DIR, f"{request_id}.prompt-response.json")
+        if not _server_post("/api/submit-prompt", {"id": request_id, "prompt": text}):
+            continue
+        print(f"[feishu] Prompt submitted for {request_id}: {text[:80]}")
 
-        # First responder wins (atomic create)
-        try:
-            if not _write_exclusive(response_file, {"action": "submit", "prompt": text}):
-                continue  # Another channel already responded
-            print(f"[feishu] Prompt submitted for {request_id}: {text[:80]}")
+        # Delete the Feishu card if we have one
+        with _lock:
+            mid = _card_ids.get(request_id)
+        if mid:
+            _delete_message(mid)
 
-            # Update the Feishu card if we have one
-            with _lock:
-                mid = _card_ids.get(request_id)
-            if mid:
-                _delete_message(mid)
-
-            if message_id:
-                _reply_text(message_id, f"Prompt sent to Claude.")
-        except IOError:
-            pass
+        if message_id:
+            _reply_text(message_id, f"Prompt sent to Claude.")
         return
 
     # No pending prompt-waiting
@@ -554,14 +566,9 @@ def _handle_prompt_action(request_id, decision):
     """Process a prompt card button click (Dismiss)."""
     from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse
 
-    response_file = os.path.join(QUEUE_DIR, f"{request_id}.prompt-response.json")
-
-    try:
-        if not _write_exclusive(response_file, {"action": "dismiss"}):
-            return P2CardActionTriggerResponse({"toast": {"type": "info", "content": "Already responded"}})
-        print(f"[feishu] Prompt dismissed for {request_id}")
-    except IOError:
-        pass
+    if not _server_post("/api/dismiss-prompt", {"id": request_id}):
+        return P2CardActionTriggerResponse({"toast": {"type": "error", "content": "Dismiss failed"}})
+    print(f"[feishu] Prompt dismissed for {request_id}")
 
     with _lock:
         mid = _card_ids.get(request_id)
