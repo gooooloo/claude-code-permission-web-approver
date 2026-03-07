@@ -748,10 +748,10 @@ function toolCat(name) {
 function stateLabel(s) {
   const m = {
     idle: 'Idle',
-    busy: 'Working',
-    permission_prompt: 'Needs Approval',
-    elicitation: 'Question',
-    plan_review: 'Plan Review'
+    busy: 'Busy',
+    permission_prompt: 'Ask',
+    elicitation: 'Ask',
+    plan_review: 'Plan'
   };
   return m[s] || s;
 }
