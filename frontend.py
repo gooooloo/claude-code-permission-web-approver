@@ -732,6 +732,7 @@ function renderDashboard(sessions) {
     if (state === 'idle') {
       html += '<div class="sc-prompt-row" onclick="event.stopPropagation()">';
       html += '<input class="sc-prompt-input" id="dashPrompt-' + esc(s.session_id) + '" placeholder="Send a prompt..." onkeydown="if((event.ctrlKey||event.metaKey)&&event.key===\\'Enter\\'){event.preventDefault();sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')}">';
+      html += '<button class="sc-prompt-send" style="background:#2a2a4a;color:#a78bfa" onclick="document.getElementById(\\'dashPrompt-' + esc(s.session_id) + '\\').value=\\'/clear\\';document.getElementById(\\'dashPrompt-' + esc(s.session_id) + '\\').focus()">/clear</button>';
       html += '<button class="sc-prompt-send" onclick="sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')">Send</button>';
       html += '</div>';
     }
