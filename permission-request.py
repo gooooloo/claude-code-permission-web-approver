@@ -35,7 +35,7 @@ TIMEOUT = 86400  # 24 hours
 def _find_claude_pid():
     """Walk up the process tree to find the 'claude' process PID."""
     pid = os.getppid()
-    for _ in range(10):
+    for i in range(10):
         try:
             with open(f"/proc/{pid}/comm") as f:
                 comm = f.read().strip()
@@ -225,6 +225,7 @@ def main():
 
     tool_name = input_data.get("tool_name", "Unknown")
     tool_input = input_data.get("tool_input", {})
+
     if isinstance(tool_input, str):
         try:
             tool_input = json.loads(tool_input)
@@ -233,7 +234,7 @@ def main():
 
     project_dir = os.getcwd()
     settings_file = os.path.join(project_dir, ".claude", "settings.local.json")
-    session_id = str(_find_claude_pid())
+    session_id = input_data.get("session_id", "") or str(_find_claude_pid())
 
     # Build detail and patterns
     detail, detail_sub, allow_pattern, allow_patterns = build_detail(tool_name, tool_input)

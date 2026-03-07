@@ -33,7 +33,6 @@ except ImportError:
 QUEUE_DIR = "/tmp/claude-webui"
 IMAGE_DIR = "/tmp/claude-images"
 PORT = 19836
-
 # ── Session registry ──
 sessions = {}
 # sessions[session_id] = {
@@ -74,45 +73,45 @@ def update_session_state(sid):
             f.seek(offset)
             new_data = f.read()
     except IOError:
-        return
+        new_data = b""
 
-    if not new_data:
-        return
+    if new_data:
+        text = new_data.decode("utf-8", errors="replace")
+        lines = text.split("\n")
+        new_entries = []
+        bytes_consumed = 0
 
-    text = new_data.decode("utf-8", errors="replace")
-    lines = text.split("\n")
-    new_entries = []
-    bytes_consumed = 0
+        for i, line in enumerate(lines):
+            # +1 for the \n delimiter, but the last element from split() has no trailing \n
+            nl = 1 if i < len(lines) - 1 else 0
+            if not line.strip():
+                bytes_consumed += len(line.encode("utf-8")) + nl
+                continue
+            try:
+                entry = json.loads(line)
+                new_entries.append(entry)
+                bytes_consumed += len(line.encode("utf-8")) + nl
+            except (json.JSONDecodeError, ValueError):
+                if i == len(lines) - 1:
+                    # Last line may be incomplete (still being written) — stop here
+                    break
+                # Mid-file bad line — skip it
+                bytes_consumed += len(line.encode("utf-8")) + nl
 
-    for i, line in enumerate(lines):
-        # +1 for the \n delimiter, but the last element from split() has no trailing \n
-        nl = 1 if i < len(lines) - 1 else 0
-        if not line.strip():
-            bytes_consumed += len(line.encode("utf-8")) + nl
-            continue
-        try:
-            entry = json.loads(line)
-            new_entries.append(entry)
-            bytes_consumed += len(line.encode("utf-8")) + nl
-        except (json.JSONDecodeError, ValueError):
-            if i == len(lines) - 1:
-                # Last line may be incomplete (still being written) — stop here
-                break
-            # Mid-file bad line — skip it
-            bytes_consumed += len(line.encode("utf-8")) + nl
+        if new_entries:
+            with sessions_lock:
+                s = sessions.get(sid)
+                if not s:
+                    return
+                s["transcript_offset"] = offset + bytes_consumed
+                s["transcript_entries"].extend(new_entries)
+                s["last_activity"] = time.time()
 
-    if not new_entries:
-        return
-
+    # Always derive state — .request.json is an external signal independent of transcript changes
     with sessions_lock:
         s = sessions.get(sid)
         if not s:
             return
-        s["transcript_offset"] = offset + bytes_consumed
-        s["transcript_entries"].extend(new_entries)
-        s["last_activity"] = time.time()
-
-        # Derive state from transcript
         s["derived_state"], s["last_summary"], s["last_user_prompt"] = _derive_state(sid, s)
 
 
@@ -215,8 +214,8 @@ def _derive_state(sid, s):
             req_tool = pending_request.get("tool_name", "")
             req_input = pending_request.get("tool_input", {})
             if _tool_use_resolved_in_transcript(entries, req_tool, req_input):
-                # TUI already approved — clean up stale files
-                _cleanup_stale_request(pending_request.get("id", ""))
+                req_id = pending_request.get("id", "")
+                _cleanup_stale_request(req_id)
             else:
                 return "permission_prompt", summary, user_prompt
 
@@ -261,8 +260,8 @@ def _find_pending_request(sid):
 
 
 def _tool_use_resolved_in_transcript(entries, tool_name, tool_input):
-    """Check if a tool_use matching this request has a tool_result in transcript."""
-    # Walk backwards looking for the matching tool_use
+    """Check if the most recent tool_use matching this request has a tool_result."""
+    # Walk backwards — only check the LAST tool_use with this name
     for i in range(len(entries) - 1, -1, -1):
         entry = entries[i]
         if entry.get("type") != "assistant":
@@ -275,9 +274,8 @@ def _tool_use_resolved_in_transcript(entries, tool_name, tool_input):
             if c.get("name") != tool_name:
                 continue
             tool_id = c.get("id", "")
-            # Check if there's a tool_result for this tool_id
-            if _has_tool_result(entries[i:], tool_id):
-                return True
+            # Only check the most recent matching tool_use — don't continue to older ones
+            return _has_tool_result(entries[i:], tool_id)
     return False
 
 
@@ -619,14 +617,11 @@ class WebUIHandler(BaseHTTPRequestHandler):
                                 data = json.load(f)
                             if str(data.get("session_id", "")) == sid:
                                 resp_path = fpath.replace(".request.json", ".response.json")
-                                try:
-                                    os.remove(fpath)
-                                except OSError:
-                                    pass
-                                try:
-                                    os.remove(resp_path)
-                                except OSError:
-                                    pass
+                                for p in (fpath, resp_path):
+                                    try:
+                                        os.remove(p)
+                                    except OSError:
+                                        pass
                         except (json.JSONDecodeError, IOError):
                             continue
 
