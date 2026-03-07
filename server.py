@@ -507,9 +507,9 @@ HTML_PAGE = """<!DOCTYPE html>
     50% { opacity: 1; }
   }
   .session-card {
-    background: hsl(var(--sh,220),40%,12%);
-    border: 1px solid hsl(var(--sh,220),30%,25%);
-    border-left: 4px solid #666;
+    background: #16213e;
+    border: 1px solid #2a2a4a;
+    border-left: 4px solid hsl(var(--sh,220),60%,50%);
     border-radius: 12px;
     padding: 16px 20px;
     margin-bottom: 12px;
@@ -517,12 +517,7 @@ HTML_PAGE = """<!DOCTYPE html>
     transition: all 0.2s;
     animation: slideIn 0.3s ease;
   }
-  .session-card:hover { filter: brightness(1.2); }
-  .session-card.state-idle { border-left-color: #4ade80; }
-  .session-card.state-busy { border-left-color: #3b82f6; }
-  .session-card.state-permission_prompt { border-left-color: #ef4444; }
-  .session-card.state-elicitation { border-left-color: #22d3ee; }
-  .session-card.state-plan_review { border-left-color: #a78bfa; }
+  .session-card:hover { border-color: #a78bfa55; background: #1a2744; border-left-color: hsl(var(--sh,220),60%,50%); }
   @keyframes slideIn {
     from { opacity: 0; transform: translateY(-10px); }
     to { opacity: 1; transform: translateY(0); }
