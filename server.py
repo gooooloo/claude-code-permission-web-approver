@@ -83,19 +83,21 @@ def update_session_state(sid):
     bytes_consumed = 0
 
     for i, line in enumerate(lines):
+        # +1 for the \n delimiter, but the last element from split() has no trailing \n
+        nl = 1 if i < len(lines) - 1 else 0
         if not line.strip():
-            bytes_consumed += len(line.encode("utf-8")) + 1
+            bytes_consumed += len(line.encode("utf-8")) + nl
             continue
         try:
             entry = json.loads(line)
             new_entries.append(entry)
-            bytes_consumed += len(line.encode("utf-8")) + 1
+            bytes_consumed += len(line.encode("utf-8")) + nl
         except (json.JSONDecodeError, ValueError):
             if i == len(lines) - 1:
                 # Last line may be incomplete (still being written) — stop here
                 break
             # Mid-file bad line — skip it
-            bytes_consumed += len(line.encode("utf-8")) + 1
+            bytes_consumed += len(line.encode("utf-8")) + nl
 
     if not new_entries:
         return
@@ -339,20 +341,42 @@ def _is_session_alive(sid, session_data):
     except (OSError, ProcessLookupError):
         return False
 
-    # For UUID session IDs, check if the tmux pane still has claude running
+    # For UUID session IDs, check if the tmux pane exists and has claude in its process tree
     tmux_pane = session_data.get("tmux_pane", "")
     tmux_socket = session_data.get("tmux_socket", "")
     if tmux_pane and tmux_socket:
         socket_path = tmux_socket.split(",")[0]
         try:
+            # Get the pane's shell PID
             result = subprocess.run(
-                ["tmux", "-S", socket_path, "list-panes", "-a", "-F", "#{pane_id} #{pane_current_command}"],
+                ["tmux", "-S", socket_path, "list-panes", "-a",
+                 "-F", "#{pane_id} #{pane_pid}"],
                 capture_output=True, text=True, timeout=3
             )
+            shell_pid = None
             for line in result.stdout.strip().splitlines():
                 parts = line.split(" ", 1)
                 if len(parts) == 2 and parts[0] == tmux_pane:
-                    return parts[1] in ("claude", "node")
+                    shell_pid = parts[1]
+                    break
+            if not shell_pid:
+                return False
+            # Check if any child of the shell is claude/node
+            children = subprocess.run(
+                ["pgrep", "-P", shell_pid],
+                capture_output=True, text=True, timeout=3
+            )
+            for child_pid in children.stdout.strip().splitlines():
+                child_pid = child_pid.strip()
+                if not child_pid:
+                    continue
+                ps_result = subprocess.run(
+                    ["ps", "-p", child_pid, "-o", "comm="],
+                    capture_output=True, text=True, timeout=3
+                )
+                comm = os.path.basename(ps_result.stdout.strip())
+                if comm in ("claude", "node"):
+                    return True
         except Exception:
             pass
 
@@ -1729,9 +1753,12 @@ class WebUIHandler(BaseHTTPRequestHandler):
                     if os.path.exists(resp_path):
                         continue
                     pid = data.get("pid")
-                    if pid and not _is_pid_alive(pid):
-                        os.remove(fpath)
-                        continue
+                    if pid:
+                        try:
+                            os.kill(int(pid), 0)
+                        except (OSError, ProcessLookupError, ValueError):
+                            os.remove(fpath)
+                            continue
                     requests.append(data)
                 except (json.JSONDecodeError, IOError):
                     continue
