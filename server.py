@@ -12,6 +12,7 @@ Then open http://localhost:19836
 import json
 import glob
 import os
+import re
 import signal
 import subprocess
 import time
@@ -108,13 +109,14 @@ def update_session_state(sid):
         s["last_activity"] = time.time()
 
         # Derive state from transcript
-        s["derived_state"], s["last_summary"] = _derive_state(sid, s)
+        s["derived_state"], s["last_summary"], s["last_user_prompt"] = _derive_state(sid, s)
 
 
 def _derive_state(sid, s):
     """Derive session state from transcript entries + pending request files."""
     entries = s["transcript_entries"]
     summary = s.get("last_summary", "")
+    user_prompt = s.get("last_user_prompt", "")
 
     # Find last meaningful entries (skip file-history-snapshot, queue-operation)
     last_assistant = None
@@ -126,6 +128,46 @@ def _derive_state(sid, s):
         elif etype == "user" and last_user is None:
             last_user = entry
         if last_assistant and last_user:
+            break
+
+    # Extract last user prompt text (skip tool_results and system-injected messages)
+    for entry in reversed(entries):
+        if entry.get("type") != "user":
+            continue
+        msg = entry.get("message", {})
+        content = msg.get("content", "")
+        text = ""
+        if isinstance(content, str):
+            # Skip messages that are purely system-injected XML
+            stripped = content.strip()
+            if stripped.startswith("<") and not any(c in stripped for c in ["\n"] if stripped.count("<") > 3):
+                # Check if it's mostly XML — strip tags and see what's left
+                pass
+            text = content
+        elif isinstance(content, list):
+            parts = []
+            for c in content:
+                if isinstance(c, dict) and c.get("type") == "text":
+                    parts.append(c.get("text", ""))
+                elif isinstance(c, str):
+                    parts.append(c)
+            text = " ".join(parts)
+        if not text.strip():
+            continue
+        # Strip XML tags and their content for known system tags
+        clean = re.sub(r"<system-reminder>.*?</system-reminder>", "", text, flags=re.DOTALL)
+        clean = re.sub(r"<local-command-caveat>.*?</local-command-caveat>", "", clean, flags=re.DOTALL)
+        clean = re.sub(r"<local-command-stdout>.*?</local-command-stdout>", "", clean, flags=re.DOTALL)
+        clean = re.sub(r"<task-notification>.*?</task-notification>", "", clean, flags=re.DOTALL)
+        clean = re.sub(r"<command-name>.*?</command-name>", "", clean, flags=re.DOTALL)
+        clean = re.sub(r"<command-message>.*?</command-message>", "", clean, flags=re.DOTALL)
+        clean = re.sub(r"<command-args>.*?</command-args>", "", clean, flags=re.DOTALL)
+        # Strip any remaining XML tags
+        clean = re.sub(r"<[^>]+>", "", clean)
+        # Collapse whitespace
+        clean = re.sub(r"\s+", " ", clean).strip()
+        if clean:
+            user_prompt = clean[:200]
             break
 
     # Extract info from last assistant message
@@ -154,24 +196,24 @@ def _derive_state(sid, s):
                 # TUI already approved — clean up stale files
                 _cleanup_stale_request(pending_request.get("id", ""))
             else:
-                return "permission_prompt", summary
+                return "permission_prompt", summary, user_prompt
 
         if tool_uses:
             last_tool = tool_uses[-1]
             tool_name = last_tool.get("name", "")
 
             if tool_name == "AskUserQuestion":
-                return "elicitation", summary
+                return "elicitation", summary, user_prompt
             if tool_name == "ExitPlanMode":
-                return "plan_review", summary
+                return "plan_review", summary, user_prompt
 
             # Has unresolved tool_use — check if there's a matching tool_result
             tool_id = last_tool.get("id", "")
             if not _has_tool_result(entries, tool_id):
-                return "busy", summary
+                return "busy", summary, user_prompt
 
         if stop_reason == "end_turn":
-            return "idle", summary
+            return "idle", summary, user_prompt
 
     # Check ordering: if last user message is after last assistant
     if last_user and last_assistant:
@@ -183,9 +225,9 @@ def _derive_state(sid, s):
             if entry is last_assistant:
                 asst_idx = i
         if user_idx > asst_idx:
-            return "busy", summary
+            return "busy", summary, user_prompt
 
-    return "busy", summary
+    return "busy", summary, user_prompt
 
 
 def _find_pending_request(sid):
@@ -485,6 +527,18 @@ HTML_PAGE = """<!DOCTYPE html>
     font-size: 11px;
     color: #666;
     margin-left: auto;
+  }
+  .sc-user-prompt {
+    font-size: 13px;
+    color: #c9d1d9;
+    line-height: 1.5;
+    max-height: 40px;
+    overflow: hidden;
+    margin-bottom: 4px;
+  }
+  .sc-user-prompt::before {
+    content: '> ';
+    color: #58a6ff;
   }
   .sc-summary {
     font-size: 13px;
@@ -1000,7 +1054,7 @@ function renderDashboard(sessions) {
   document.title = needAttention > 0 ? '(' + needAttention + ') Claude Sessions' : 'Claude Sessions';
 
   // Skip re-render if nothing changed
-  const hash = sessions.map(s => s.session_id + ':' + (s.state||'') + ':' + (s.last_summary||'') + ':' + (s.last_activity||'') + ':' + (s.pending_request ? s.pending_request.id : '')).join('|');
+  const hash = sessions.map(s => s.session_id + ':' + (s.state||'') + ':' + (s.last_summary||'') + ':' + (s.last_user_prompt||'') + ':' + (s.last_activity||'') + ':' + (s.pending_request ? s.pending_request.id : '')).join('|');
   if (hash === lastDashboardHash) return;
   lastDashboardHash = hash;
 
@@ -1009,6 +1063,7 @@ function renderDashboard(sessions) {
     const project = (s.cwd || '').split('/').pop() || '?';
     const state = s.state || 'busy';
     const summary = esc(s.last_summary || '');
+    const userPrompt = esc(s.last_user_prompt || '');
     const time = s.last_activity ? new Date(s.last_activity * 1000).toLocaleTimeString() : '';
     html += '<div class="session-card state-' + state + '" onclick="openSession(\\'' + esc(s.session_id) + '\\')">';
     html += '<div class="sc-top">';
@@ -1016,6 +1071,7 @@ function renderDashboard(sessions) {
     html += '<span class="sc-project">' + esc(project) + '</span>';
     html += '<span class="sc-sid">Session ' + esc(s.session_id) + '</span>';
     html += '</div>';
+    if (userPrompt) html += '<div class="sc-user-prompt">' + userPrompt + '</div>';
     if (summary) html += '<div class="sc-summary">' + summary + '</div>';
     if (time) html += '<div class="sc-time">' + time + '</div>';
 
@@ -1630,6 +1686,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
                         "cwd": s["cwd"],
                         "state": s["derived_state"],
                         "last_summary": s["last_summary"],
+                        "last_user_prompt": s["last_user_prompt"],
                         "last_activity": s["last_activity"],
                         "registered_at": s["registered_at"],
                     }
@@ -1739,6 +1796,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
                         "derived_state": "busy",
                         "last_activity": time.time(),
                         "last_summary": "",
+                        "last_user_prompt": "",
                     }
                 else:
                     # resume/clear/compact — update path and reset offset
@@ -1978,8 +2036,117 @@ class WebUIHandler(BaseHTTPRequestHandler):
             print(f"[!] Failed to update settings: {e}")
 
 
+def scan_existing_sessions():
+    """Scan tmux panes for running claude processes and register them."""
+    # Find all tmux sockets
+    import pathlib
+    tmux_sockets = []
+    for sock_dir in pathlib.Path("/tmp").glob("tmux-*"):
+        for sock in sock_dir.iterdir():
+            if sock.is_socket():
+                tmux_sockets.append(str(sock))
+    if not tmux_sockets:
+        return
+
+    home = os.path.expanduser("~")
+    projects_dir = os.path.join(home, ".claude", "projects")
+    if not os.path.isdir(projects_dir):
+        return
+
+    for sock_path in tmux_sockets:
+        try:
+            result = subprocess.run(
+                ["tmux", "-S", sock_path, "list-panes", "-a",
+                 "-F", "#{pane_id} #{pane_current_command} #{pane_pid}"],
+                capture_output=True, text=True, timeout=3
+            )
+        except Exception:
+            continue
+
+        # Build pane_pid -> pane_id mapping
+        pane_map = {}  # shell_pid -> pane_id
+        for line in result.stdout.strip().splitlines():
+            parts = line.split(" ", 2)
+            if len(parts) >= 3:
+                pane_id, cmd, shell_pid = parts[0], parts[1], parts[2]
+                pane_map[shell_pid] = pane_id
+
+        # Find claude processes whose parent is a tmux shell
+        for shell_pid, pane_id in pane_map.items():
+            try:
+                children = subprocess.run(
+                    ["pgrep", "-P", shell_pid],
+                    capture_output=True, text=True, timeout=3
+                )
+            except Exception:
+                continue
+
+            for child_pid_str in children.stdout.strip().splitlines():
+                child_pid = child_pid_str.strip()
+                if not child_pid:
+                    continue
+                try:
+                    with open(f"/proc/{child_pid}/comm") as f:
+                        comm = f.read().strip()
+                    if comm not in ("claude", "node"):
+                        continue
+                    with open(f"/proc/{child_pid}/cmdline") as f:
+                        cmdline = f.read()
+                    if "claude" not in cmdline:
+                        continue
+                except (FileNotFoundError, PermissionError):
+                    continue
+
+                # Get cwd
+                try:
+                    cwd = os.readlink(f"/proc/{child_pid}/cwd")
+                except (FileNotFoundError, PermissionError):
+                    continue
+
+                # Find transcript: encode cwd to project dir name
+                encoded = cwd.replace("/", "-")
+                if not encoded.startswith("-"):
+                    encoded = "-" + encoded
+                proj_dir = os.path.join(projects_dir, encoded)
+                if not os.path.isdir(proj_dir):
+                    continue
+
+                jsonl_files = glob.glob(os.path.join(proj_dir, "*.jsonl"))
+                if not jsonl_files:
+                    continue
+                # Most recently modified transcript
+                transcript_path = max(jsonl_files, key=os.path.getmtime)
+                # Session ID = filename without extension (UUID)
+                session_id = os.path.splitext(os.path.basename(transcript_path))[0]
+                tmux_socket = f"{sock_path},0,0"  # simplified; enough for send-keys
+
+                with sessions_lock:
+                    if session_id in sessions:
+                        continue
+                    sessions[session_id] = {
+                        "transcript_path": transcript_path,
+                        "tmux_pane": pane_id,
+                        "tmux_socket": tmux_socket,
+                        "cwd": cwd,
+                        "registered_at": time.time(),
+                        "transcript_offset": 0,
+                        "transcript_entries": [],
+                        "derived_state": "busy",
+                        "last_activity": time.time(),
+                        "last_summary": "",
+                        "last_user_prompt": "",
+                    }
+                print(f"[*] Auto-discovered session: {session_id} pane={pane_id} cwd={cwd}")
+
+
 def main():
     os.makedirs(QUEUE_DIR, exist_ok=True)
+
+    # Scan for existing sessions before starting
+    try:
+        scan_existing_sessions()
+    except Exception as e:
+        print(f"[!] Session scan failed: {e}")
 
     # Background threads
     threading.Thread(target=auto_allow_loop, daemon=True).start()
