@@ -119,6 +119,7 @@ HTML_PAGE = """<!DOCTYPE html>
     color: #888;
     line-height: 1.4;
     margin-bottom: 4px;
+    white-space: pre-wrap;
   }
   .sc-user-prompt::before {
     content: '> ';

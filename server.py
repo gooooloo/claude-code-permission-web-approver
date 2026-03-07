@@ -168,10 +168,13 @@ def _derive_state(sid, s):
         clean = re.sub(r"<command-args>.*?</command-args>", "", clean, flags=re.DOTALL)
         # Strip any remaining XML tags
         clean = re.sub(r"<[^>]+>", "", clean)
-        # Collapse whitespace
-        clean = re.sub(r"\s+", " ", clean).strip()
+        # Collapse runs of spaces/tabs (preserve newlines)
+        clean = re.sub(r"[^\S\n]+", " ", clean)
+        # Collapse 3+ newlines into 2
+        clean = re.sub(r"\n{3,}", "\n\n", clean)
+        clean = clean.strip()
         if clean:
-            user_prompt = clean[:200]
+            user_prompt = clean
             break
 
     # Check if the last user message is after the last assistant message.
