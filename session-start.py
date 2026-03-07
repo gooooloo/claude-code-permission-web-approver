@@ -19,6 +19,34 @@ SERVER = "http://127.0.0.1:19836"
 QUEUE_DIR = "/tmp/claude-webui"
 
 
+def _find_claude_pid():
+    """Walk up the process tree to find the 'claude' process PID."""
+    pid = os.getppid()
+    for _ in range(10):
+        try:
+            with open(f"/proc/{pid}/comm") as f:
+                comm = f.read().strip()
+            if comm in ("claude", "node"):
+                # Found claude or its node process
+                # Check cmdline to confirm it's actually claude
+                with open(f"/proc/{pid}/cmdline") as f:
+                    cmdline = f.read()
+                if "claude" in cmdline:
+                    return pid
+            # Walk up
+            with open(f"/proc/{pid}/status") as f:
+                for line in f:
+                    if line.startswith("PPid:"):
+                        pid = int(line.split()[1])
+                        break
+                else:
+                    break
+        except (FileNotFoundError, PermissionError, ValueError):
+            break
+    # Fallback to direct parent
+    return os.getppid()
+
+
 def find_transcript_path():
     """Find the most recently modified transcript JSONL for this project."""
     project_dir = os.getcwd()
@@ -43,9 +71,14 @@ def main():
         input_data = {}
 
     source = input_data.get("source", "unknown")
-    session_id = str(os.getppid())
+    session_id = input_data.get("session_id", "") or str(_find_claude_pid())
     project_dir = os.getcwd()
-    transcript_path = find_transcript_path()
+
+    # Debug log
+    import datetime
+    with open("/tmp/claude-webui/session-start-debug.log", "a") as f:
+        f.write(f"{datetime.datetime.now()} ppid={os.getppid()} session_id={session_id} source={source} input={json.dumps(input_data)}\n")
+    transcript_path = input_data.get("transcript_path", "") or find_transcript_path()
     tmux_pane = os.environ.get("TMUX_PANE", "")
     tmux_socket = os.environ.get("TMUX", "")
 

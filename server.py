@@ -282,13 +282,36 @@ def auto_allow_loop():
 
 # ── Zombie session cleanup ──
 
-def _is_pid_alive(pid):
-    """Check if a process is still running."""
+def _is_session_alive(sid, session_data):
+    """Check if a session is still active."""
+    # For numeric session IDs (PIDs), check if the process is alive
     try:
-        os.kill(int(pid), 0)
+        pid = int(sid)
+        os.kill(pid, 0)
         return True
-    except (OSError, ProcessLookupError, ValueError):
+    except ValueError:
+        pass  # Non-numeric (UUID) session ID
+    except (OSError, ProcessLookupError):
         return False
+
+    # For UUID session IDs, check if the tmux pane still has claude running
+    tmux_pane = session_data.get("tmux_pane", "")
+    tmux_socket = session_data.get("tmux_socket", "")
+    if tmux_pane and tmux_socket:
+        socket_path = tmux_socket.split(",")[0]
+        try:
+            result = subprocess.run(
+                ["tmux", "-S", socket_path, "list-panes", "-a", "-F", "#{pane_id} #{pane_current_command}"],
+                capture_output=True, text=True, timeout=3
+            )
+            for line in result.stdout.strip().splitlines():
+                parts = line.split(" ", 1)
+                if len(parts) == 2 and parts[0] == tmux_pane:
+                    return parts[1] in ("claude", "node")
+        except Exception:
+            pass
+
+    return False
 
 
 def zombie_cleanup_loop():
@@ -298,7 +321,7 @@ def zombie_cleanup_loop():
         dead = []
         with sessions_lock:
             for sid in list(sessions.keys()):
-                if not _is_pid_alive(sid):
+                if not _is_session_alive(sid, sessions[sid]):
                     dead.append(sid)
             for sid in dead:
                 del sessions[sid]
@@ -900,6 +923,9 @@ let currentSessionId = null;
 let respondedIds = new Set();
 let imagePaths = [];
 let pollTimer = null;
+let lastDashboardHash = '';
+let lastPermCardId = '';
+let lastTranscriptHash = '';
 
 // Question state
 const questionSelections = {};
@@ -958,7 +984,10 @@ async function fetchSessions() {
 function renderDashboard(sessions) {
   const el = document.getElementById('sessionList');
   if (sessions.length === 0) {
-    el.innerHTML = '<div class="empty"><span class="dot"></span>No active sessions</div>';
+    if (lastDashboardHash !== 'empty') {
+      el.innerHTML = '<div class="empty"><span class="dot"></span>No active sessions</div>';
+      lastDashboardHash = 'empty';
+    }
     document.title = 'Claude Sessions';
     return;
   }
@@ -966,6 +995,11 @@ function renderDashboard(sessions) {
     s.state === 'permission_prompt' || s.state === 'elicitation' || s.state === 'plan_review' || s.state === 'idle'
   ).length;
   document.title = needAttention > 0 ? '(' + needAttention + ') Claude Sessions' : 'Claude Sessions';
+
+  // Skip re-render if nothing changed
+  const hash = sessions.map(s => s.session_id + ':' + (s.state||'') + ':' + (s.last_summary||'') + ':' + (s.last_activity||'') + ':' + (s.pending_request ? s.pending_request.id : '')).join('|');
+  if (hash === lastDashboardHash) return;
+  lastDashboardHash = hash;
 
   let html = '';
   sessions.forEach(s => {
@@ -1008,6 +1042,8 @@ function openSession(sid) {
   document.getElementById('pageTitle').textContent = 'Session ' + sid;
   document.getElementById('transcriptView').innerHTML = '';
   document.getElementById('permCards').innerHTML = '';
+  lastPermCardId = '';
+  lastTranscriptHash = '';
   fetchSessionDetail();
   startDetailPolling();
 }
@@ -1020,6 +1056,8 @@ function showDashboard() {
   document.getElementById('backBtn').style.display = 'none';
   document.getElementById('pageTitle').textContent = 'Claude Sessions';
   stopDetailPolling();
+  lastDashboardHash = '';
+  fetchSessions();
 }
 
 let detailPollTimer = null;
@@ -1057,11 +1095,17 @@ async function fetchSessionDetail() {
 function renderPermCards(session) {
   const el = document.getElementById('permCards');
   if (!session.pending_request) {
-    el.innerHTML = '';
+    if (lastPermCardId) { el.innerHTML = ''; lastPermCardId = ''; }
     return;
   }
   const pr = session.pending_request;
-  if (respondedIds.has(pr.id)) { el.innerHTML = ''; return; }
+  if (respondedIds.has(pr.id)) {
+    if (lastPermCardId) { el.innerHTML = ''; lastPermCardId = ''; }
+    return;
+  }
+  // Skip re-render if same permission request is already shown
+  if (pr.id === lastPermCardId) return;
+  lastPermCardId = pr.id;
 
   const cat = toolCat(pr.tool_name);
   const isBenign = ['plan','question','web'].includes(cat) || pr.tool_name === 'Read';
@@ -1253,6 +1297,11 @@ function submitQAnswer(reqId) {
 
 function renderTranscript(entries) {
   const el = document.getElementById('transcriptView');
+  // Skip re-render if transcript hasn't changed
+  const tHash = entries.length + ':' + (entries.length > 0 ? JSON.stringify(entries[entries.length - 1]).length : 0);
+  if (tHash === lastTranscriptHash) return;
+  lastTranscriptHash = tHash;
+  const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   let html = '';
   entries.forEach(e => {
     if (e.type === 'user') {
@@ -1295,8 +1344,8 @@ function renderTranscript(entries) {
     }
   });
   el.innerHTML = html || '<div style="color:#555;text-align:center;padding:40px">No transcript entries</div>';
-  // Auto-scroll to bottom
-  el.scrollTop = el.scrollHeight;
+  // Only auto-scroll if user was already at the bottom
+  if (wasAtBottom) el.scrollTop = el.scrollHeight;
 }
 
 // ── Actions ──
@@ -1664,6 +1713,17 @@ class WebUIHandler(BaseHTTPRequestHandler):
             cwd = body.get("cwd", "")
 
             with sessions_lock:
+                # Evict other sessions on the same tmux pane
+                if tmux_pane:
+                    evict = [k for k, v in sessions.items() if k != sid and v.get("tmux_pane") == tmux_pane]
+                    for k in evict:
+                        del sessions[k]
+                        keys_to_remove = [ak for ak in session_auto_allow if ak[0] == k]
+                        for ak in keys_to_remove:
+                            del session_auto_allow[ak]
+                    if evict:
+                        print(f"[~] Evicted session(s) on pane {tmux_pane}: {evict}")
+
                 if source == "startup" or sid not in sessions:
                     sessions[sid] = {
                         "transcript_path": transcript_path,

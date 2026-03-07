@@ -32,6 +32,30 @@ SERVER = "http://127.0.0.1:19836"
 TIMEOUT = 86400  # 24 hours
 
 
+def _find_claude_pid():
+    """Walk up the process tree to find the 'claude' process PID."""
+    pid = os.getppid()
+    for _ in range(10):
+        try:
+            with open(f"/proc/{pid}/comm") as f:
+                comm = f.read().strip()
+            if comm in ("claude", "node"):
+                with open(f"/proc/{pid}/cmdline") as f:
+                    cmdline = f.read()
+                if "claude" in cmdline:
+                    return pid
+            with open(f"/proc/{pid}/status") as f:
+                for line in f:
+                    if line.startswith("PPid:"):
+                        pid = int(line.split()[1])
+                        break
+                else:
+                    break
+        except (FileNotFoundError, PermissionError, ValueError):
+            break
+    return os.getppid()
+
+
 def allow_response():
     """Output an allow decision and exit."""
     print(json.dumps({
@@ -209,7 +233,7 @@ def main():
 
     project_dir = os.getcwd()
     settings_file = os.path.join(project_dir, ".claude", "settings.local.json")
-    session_id = str(os.getppid())
+    session_id = str(_find_claude_pid())
 
     # Build detail and patterns
     detail, detail_sub, allow_pattern, allow_patterns = build_detail(tool_name, tool_input)
