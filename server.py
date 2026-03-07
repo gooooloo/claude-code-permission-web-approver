@@ -229,7 +229,7 @@ def _derive_state(sid, s):
             if not _has_tool_result(entries, tool_id):
                 return "busy", summary, user_prompt
 
-        if stop_reason == "end_turn":
+        if stop_reason == "end_turn" or (not tool_uses and stop_reason != "tool_use"):
             return "idle", summary, user_prompt
 
     return "busy", "", user_prompt
