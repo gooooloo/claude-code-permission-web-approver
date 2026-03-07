@@ -723,6 +723,47 @@ async function fetchSessions() {
   }
 }
 
+function buildCardHTML(s) {
+  const project = (s.cwd || '').split('/').pop() || '?';
+  const state = s.state || 'busy';
+  const userPrompt = esc(s.last_user_prompt || '');
+  const time = s.last_activity ? new Date(s.last_activity * 1000).toLocaleTimeString() : '';
+  let html = '<div class="sc-top">';
+  html += '<span class="state-badge badge-' + state + '">' + stateLabel(state) + '</span>';
+  html += '<span class="sc-project">' + esc(project) + '</span>';
+  if (time) html += '<span class="sc-time">' + time + '</span>';
+  html += '<button class="sc-collapse-btn" onclick="event.stopPropagation();toggleCollapse(\\'' + esc(s.session_id) + '\\',this)" title="Collapse/Expand">&#9660;</button>';
+  html += '</div>';
+  html += '<div class="sc-body">';
+  html += '<div class="sc-sid-row"><span class="sc-sid">' + esc(s.session_id) + '</span></div>';
+  if (userPrompt) html += '<div class="sc-user-prompt">' + userPrompt + '</div>';
+  if (s.last_summary) html += '<div class="sc-summary">' + renderMarkdown(s.last_summary) + '</div>';
+  if (state === 'permission_prompt' && s.pending_request) {
+    const pr = s.pending_request;
+    html += '<div class="sc-actions" onclick="event.stopPropagation()">';
+    html += '<span style="color:#ef4444;font-size:12px;font-weight:700">' + esc(pr.tool_name) + '</span>';
+    html += ' <span style="color:#888;font-size:12px">' + esc((pr.detail || '').substring(0, 80)) + '</span>';
+    html += ' <button class="btn-allow" style="padding:5px 14px;font-size:12px" onclick="respond(\\'' + esc(pr.id) + '\\',\\'allow\\',this)">Allow</button>';
+    html += ' <button class="btn-deny-sm" onclick="respond(\\'' + esc(pr.id) + '\\',\\'deny\\',this)">Deny</button>';
+    html += '</div>';
+  }
+  if (state === 'idle') {
+    html += '<div class="sc-prompt-row" onclick="event.stopPropagation()">';
+    html += '<input class="sc-prompt-input" id="dashPrompt-' + esc(s.session_id) + '" placeholder="Send a prompt..." onkeydown="if((event.ctrlKey||event.metaKey)&&event.key===\\'Enter\\'){event.preventDefault();sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')}">';
+    html += '<button class="sc-prompt-send" onclick="sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')">Send</button>';
+    html += '</div>';
+    html += '<div class="sc-shortcut-row" onclick="event.stopPropagation()">';
+    html += '<button class="sc-shortcut-btn" onclick="insertAtCursor(\\'dashPrompt-' + esc(s.session_id) + '\\',\\'/clear\\')">/clear</button>';
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function cardHash(s) {
+  return (s.state||'') + ':' + (s.last_summary||'') + ':' + (s.last_user_prompt||'') + ':' + (s.last_activity||'') + ':' + (s.pending_request ? s.pending_request.id : '');
+}
+
 function renderDashboard(sessions) {
   const el = document.getElementById('sessionList');
   if (sessions.length === 0) {
@@ -738,61 +779,66 @@ function renderDashboard(sessions) {
   ).length;
   document.title = needAttention > 0 ? '(' + needAttention + ') Claude Sessions' : 'Claude Sessions';
 
-  // Skip re-render if nothing changed
-  const hash = sessions.map(s => s.session_id + ':' + (s.state||'') + ':' + (s.last_summary||'') + ':' + (s.last_user_prompt||'') + ':' + (s.last_activity||'') + ':' + (s.pending_request ? s.pending_request.id : '')).join('|');
-  if (hash === lastDashboardHash) return;
-  // Skip re-render if user is typing in a dashboard prompt input
-  const focused = document.activeElement;
-  if (focused && focused.classList.contains('sc-prompt-input')) return;
-  lastDashboardHash = hash;
-
   const collapsedSet = getCollapsedSet();
   sessions.sort((a, b) => (collapsedSet.has(a.session_id) ? 1 : 0) - (collapsedSet.has(b.session_id) ? 1 : 0));
-  let html = '';
-  sessions.forEach(s => {
-    const project = (s.cwd || '').split('/').pop() || '?';
-    const state = s.state || 'busy';
-    const summary = esc(s.last_summary || '');
-    const userPrompt = esc(s.last_user_prompt || '');
-    const time = s.last_activity ? new Date(s.last_activity * 1000).toLocaleTimeString() : '';
-    const hue = sessionHue(s.session_id);
-    const collapsed = isCollapsed(s.session_id) ? ' collapsed' : '';
-    html += '<div class="session-card state-' + state + collapsed + '" style="--sh:' + hue + '" onclick="openSession(\\'' + esc(s.session_id) + '\\')">';
-    html += '<div class="sc-top">';
-    html += '<span class="state-badge badge-' + state + '">' + stateLabel(state) + '</span>';
-    html += '<span class="sc-project">' + esc(project) + '</span>';
-    if (time) html += '<span class="sc-time">' + time + '</span>';
-    html += '<button class="sc-collapse-btn" onclick="event.stopPropagation();toggleCollapse(\\'' + esc(s.session_id) + '\\',this)" title="Collapse/Expand">&#9660;</button>';
-    html += '</div>';
-    html += '<div class="sc-body">';
-    html += '<div class="sc-sid-row"><span class="sc-sid">' + esc(s.session_id) + '</span></div>';
-    if (userPrompt) html += '<div class="sc-user-prompt">' + userPrompt + '</div>';
-    if (summary) html += '<div class="sc-summary">' + renderMarkdown(s.last_summary || '') + '</div>';
 
-    // Inline permission approve/deny on dashboard
-    if (state === 'permission_prompt' && s.pending_request) {
-      const pr = s.pending_request;
-      html += '<div class="sc-actions" onclick="event.stopPropagation()">';
-      html += '<span style="color:#ef4444;font-size:12px;font-weight:700">' + esc(pr.tool_name) + '</span>';
-      html += ' <span style="color:#888;font-size:12px">' + esc((pr.detail || '').substring(0, 80)) + '</span>';
-      html += ' <button class="btn-allow" style="padding:5px 14px;font-size:12px" onclick="respond(\\'' + esc(pr.id) + '\\',\\'allow\\',this)">Allow</button>';
-      html += ' <button class="btn-deny-sm" onclick="respond(\\'' + esc(pr.id) + '\\',\\'deny\\',this)">Deny</button>';
-      html += '</div>';
-    }
-    // Inline prompt input for idle sessions
-    if (state === 'idle') {
-      html += '<div class="sc-prompt-row" onclick="event.stopPropagation()">';
-      html += '<input class="sc-prompt-input" id="dashPrompt-' + esc(s.session_id) + '" placeholder="Send a prompt..." onkeydown="if((event.ctrlKey||event.metaKey)&&event.key===\\'Enter\\'){event.preventDefault();sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')}">';
-      html += '<button class="sc-prompt-send" onclick="sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')">Send</button>';
-      html += '</div>';
-      html += '<div class="sc-shortcut-row" onclick="event.stopPropagation()">';
-      html += '<button class="sc-shortcut-btn" onclick="insertAtCursor(\\'dashPrompt-' + esc(s.session_id) + '\\',\\'/clear\\')">/clear</button>';
-      html += '</div>';
-    }
-    html += '</div>'; // close .sc-body
-    html += '</div>';
+  const desiredOrder = sessions.map(s => s.session_id);
+  const existingCards = el.querySelectorAll('.session-card[data-sid]');
+  const existingMap = {};
+  existingCards.forEach(c => { existingMap[c.getAttribute('data-sid')] = c; });
+
+  // Remove cards for sessions that no longer exist
+  existingCards.forEach(c => {
+    if (!desiredOrder.includes(c.getAttribute('data-sid'))) c.remove();
   });
-  el.innerHTML = html;
+
+  // Update or create cards in order
+  let prevNode = null;
+  sessions.forEach(s => {
+    const sid = s.session_id;
+    const state = s.state || 'busy';
+    const hue = sessionHue(sid);
+    const h = cardHash(s);
+    let card = existingMap[sid];
+    if (card) {
+      // Update class and style
+      const collapsed = isCollapsed(sid) ? ' collapsed' : '';
+      card.className = 'session-card state-' + state + collapsed;
+      card.style.cssText = '--sh:' + hue;
+      // Only update inner content if data changed
+      const prev = card.getAttribute('data-hash');
+      if (prev !== h) {
+        // Skip update if user is typing in this card's prompt input
+        const focused = document.activeElement;
+        if (!(focused && focused.id === 'dashPrompt-' + sid)) {
+          card.innerHTML = buildCardHTML(s);
+          card.setAttribute('data-hash', h);
+        }
+      }
+    } else {
+      card = document.createElement('div');
+      card.setAttribute('data-sid', sid);
+      card.setAttribute('data-hash', h);
+      const collapsed = isCollapsed(sid) ? ' collapsed' : '';
+      card.className = 'session-card state-' + state + collapsed;
+      card.style.cssText = '--sh:' + hue;
+      card.setAttribute('onclick', 'openSession(\\'' + esc(sid) + '\\')');
+      card.innerHTML = buildCardHTML(s);
+      el.appendChild(card);
+    }
+    // Ensure correct order
+    if (prevNode) {
+      if (card.previousElementSibling !== prevNode) {
+        prevNode.after(card);
+      }
+    } else {
+      if (card !== el.firstElementChild) {
+        el.prepend(card);
+      }
+    }
+    prevNode = card;
+  });
+  lastDashboardHash = sessions.map(s => s.session_id + ':' + cardHash(s)).join('|');
 }
 
 // ── Session Detail ──
