@@ -507,8 +507,8 @@ HTML_PAGE = """<!DOCTYPE html>
     50% { opacity: 1; }
   }
   .session-card {
-    background: #16213e;
-    border: 1px solid #2a2a4a;
+    background: hsl(var(--sh,220),40%,12%);
+    border: 1px solid hsl(var(--sh,220),30%,25%);
     border-left: 4px solid #666;
     border-radius: 12px;
     padding: 16px 20px;
@@ -517,7 +517,7 @@ HTML_PAGE = """<!DOCTYPE html>
     transition: all 0.2s;
     animation: slideIn 0.3s ease;
   }
-  .session-card:hover { border-color: #a78bfa55; background: #1a2744; }
+  .session-card:hover { filter: brightness(1.2); }
   .session-card.state-idle { border-left-color: #4ade80; }
   .session-card.state-busy { border-left-color: #3b82f6; }
   .session-card.state-permission_prompt { border-left-color: #ef4444; }
@@ -1016,6 +1016,12 @@ let lastTranscriptHash = '';
 const questionSelections = {};
 const questionMultiSelect = {};
 
+function sessionHue(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) & 0xffffffff;
+  return ((h % 360) + 360) % 360;
+}
+
 function esc(s) {
   const d = document.createElement('div');
   d.textContent = s || '';
@@ -1108,7 +1114,8 @@ function renderDashboard(sessions) {
     const summary = esc(s.last_summary || '');
     const userPrompt = esc(s.last_user_prompt || '');
     const time = s.last_activity ? new Date(s.last_activity * 1000).toLocaleTimeString() : '';
-    html += '<div class="session-card state-' + state + '" onclick="openSession(\\'' + esc(s.session_id) + '\\')">';
+    const hue = sessionHue(s.session_id);
+    html += '<div class="session-card state-' + state + '" style="--sh:' + hue + '" onclick="openSession(\\'' + esc(s.session_id) + '\\')">';
     html += '<div class="sc-top">';
     html += '<span class="state-badge badge-' + state + '">' + stateLabel(state) + '</span>';
     html += '<span class="sc-project">' + esc(project) + '</span>';
