@@ -140,6 +140,37 @@ HTML_PAGE = """<!DOCTYPE html>
     display: flex;
     gap: 8px;
   }
+  .sc-prompt-row {
+    margin-top: 10px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .sc-prompt-input {
+    flex: 1;
+    background: #0d1b2a;
+    color: #e0e0e0;
+    border: 1px solid #2a2a4a;
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+  }
+  .sc-prompt-input:focus { border-color: #a78bfa; }
+  .sc-prompt-input::placeholder { color: #555; }
+  .sc-prompt-send {
+    background: #a78bfa;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 7px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .sc-prompt-send:hover { background: #8b5cf6; }
   .attention-count {
     background: #ef4444;
     color: white;
@@ -664,6 +695,9 @@ function renderDashboard(sessions) {
   // Skip re-render if nothing changed
   const hash = sessions.map(s => s.session_id + ':' + (s.state||'') + ':' + (s.last_summary||'') + ':' + (s.last_user_prompt||'') + ':' + (s.last_activity||'') + ':' + (s.pending_request ? s.pending_request.id : '')).join('|');
   if (hash === lastDashboardHash) return;
+  // Skip re-render if user is typing in a dashboard prompt input
+  const focused = document.activeElement;
+  if (focused && focused.classList.contains('sc-prompt-input')) return;
   lastDashboardHash = hash;
 
   let html = '';
@@ -692,6 +726,13 @@ function renderDashboard(sessions) {
       html += ' <span style="color:#888;font-size:12px">' + esc((pr.detail || '').substring(0, 80)) + '</span>';
       html += ' <button class="btn-allow" style="padding:5px 14px;font-size:12px" onclick="respond(\\'' + esc(pr.id) + '\\',\\'allow\\',this)">Allow</button>';
       html += ' <button class="btn-deny-sm" onclick="respond(\\'' + esc(pr.id) + '\\',\\'deny\\',this)">Deny</button>';
+      html += '</div>';
+    }
+    // Inline prompt input for idle sessions
+    if (state === 'idle') {
+      html += '<div class="sc-prompt-row" onclick="event.stopPropagation()">';
+      html += '<input class="sc-prompt-input" id="dashPrompt-' + esc(s.session_id) + '" placeholder="Send a prompt..." onkeydown="if((event.ctrlKey||event.metaKey)&&event.key===\\'Enter\\'){event.preventDefault();sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')}">';
+      html += '<button class="sc-prompt-send" onclick="sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')">Send</button>';
       html += '</div>';
     }
     html += '</div>';
@@ -1201,6 +1242,23 @@ async function quickPrompt(prompt) {
       body: JSON.stringify({session_id: currentSessionId, prompt})
     });
   } catch (e) {}
+}
+
+async function sendDashboardPrompt(sessionId) {
+  const input = document.getElementById('dashPrompt-' + sessionId);
+  if (!input) return;
+  const prompt = input.value.trim();
+  if (!prompt) { input.focus(); return; }
+  input.value = '';
+  try {
+    await fetch('/api/send-prompt', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: sessionId, prompt})
+    });
+  } catch (e) {
+    console.error('Failed to send prompt:', e);
+  }
 }
 
 // ── Image upload ──
