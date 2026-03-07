@@ -171,6 +171,22 @@ HTML_PAGE = """<!DOCTYPE html>
     white-space: nowrap;
   }
   .sc-prompt-send:hover { background: #8b5cf6; }
+  .sc-shortcut-row {
+    margin-top: 6px;
+    display: flex;
+    gap: 6px;
+  }
+  .sc-shortcut-btn {
+    background: #2a2a4a;
+    color: #a78bfa;
+    border: none;
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .sc-shortcut-btn:hover { background: #3a3a5a; }
   .attention-count {
     background: #ef4444;
     color: white;
@@ -732,8 +748,10 @@ function renderDashboard(sessions) {
     if (state === 'idle') {
       html += '<div class="sc-prompt-row" onclick="event.stopPropagation()">';
       html += '<input class="sc-prompt-input" id="dashPrompt-' + esc(s.session_id) + '" placeholder="Send a prompt..." onkeydown="if((event.ctrlKey||event.metaKey)&&event.key===\\'Enter\\'){event.preventDefault();sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')}">';
-      html += '<button class="sc-prompt-send" style="background:#2a2a4a;color:#a78bfa" onclick="document.getElementById(\\'dashPrompt-' + esc(s.session_id) + '\\').value=\\'/clear\\';document.getElementById(\\'dashPrompt-' + esc(s.session_id) + '\\').focus()">/clear</button>';
       html += '<button class="sc-prompt-send" onclick="sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')">Send</button>';
+      html += '</div>';
+      html += '<div class="sc-shortcut-row" onclick="event.stopPropagation()">';
+      html += '<button class="sc-shortcut-btn" onclick="document.getElementById(\\'dashPrompt-' + esc(s.session_id) + '\\').value=\\'/clear\\';document.getElementById(\\'dashPrompt-' + esc(s.session_id) + '\\').focus()">/clear</button>';
       html += '</div>';
     }
     html += '</div>';
