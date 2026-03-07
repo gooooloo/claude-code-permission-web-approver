@@ -661,8 +661,12 @@ function toggleCollapse(sid, btn) {
   localStorage.setItem('collapsed_sessions', JSON.stringify([...set]));
   const card = btn.closest('.session-card');
   if (card) card.classList.toggle('collapsed');
+  // Re-sort cards: expanded before collapsed
+  const el = document.getElementById('sessionList');
+  const cards = [...el.querySelectorAll('.session-card[data-sid]')];
+  cards.sort((a, b) => (a.classList.contains('collapsed') ? 1 : 0) - (b.classList.contains('collapsed') ? 1 : 0));
+  cards.forEach(c => el.appendChild(c));
   lastDashboardHash = '';
-  fetchSessions();
 }
 
 function renderMarkdown(text) {
