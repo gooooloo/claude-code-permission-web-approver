@@ -868,6 +868,7 @@ function openSession(sid) {
   touchSession(sid);
   currentSessionId = sid;
   currentView = 'detail';
+  location.hash = 'session/' + sid;
   document.getElementById('dashboardView').style.display = 'none';
   document.getElementById('detailView').style.display = 'block';
   document.getElementById('backBtn').style.display = 'block';
@@ -883,6 +884,7 @@ function openSession(sid) {
 function showDashboard() {
   currentSessionId = null;
   currentView = 'dashboard';
+  location.hash = '';
   document.getElementById('dashboardView').style.display = 'block';
   document.getElementById('detailView').style.display = 'none';
   document.getElementById('backBtn').style.display = 'none';
@@ -1140,7 +1142,9 @@ function renderTranscript(entries) {
       const content = e.message && e.message.content;
       if (!content) return;
       let text = '';
-      if (Array.isArray(content)) {
+      if (typeof content === 'string') {
+        text = content;
+      } else if (Array.isArray(content)) {
         content.forEach(c => {
           if (typeof c === 'string') text += c;
           else if (c.type === 'text') text += c.text || '';
@@ -1448,8 +1452,18 @@ document.getElementById('promptInput').addEventListener('paste', function(e) {
   }
 });
 
+// ── Init: restore view from URL hash ──
+(function() {
+  const hash = location.hash;
+  const m = hash.match(/^#session\\/(.+)$/);
+  if (m) {
+    openSession(m[1]);
+  } else {
+    fetchSessions();
+  }
+})();
+
 // ── Polling ──
-fetchSessions();
 pollTimer = setInterval(() => {
   if (currentView === 'dashboard') fetchSessions();
 }, 2000);
