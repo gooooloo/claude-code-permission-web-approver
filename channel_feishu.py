@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Feishu (飞书) notification channel for Claude Code WebUI.
+Feishu notification channel for Claude Code WebUI.
 
-Sends permission requests and prompt-waiting notifications to a Feishu bot,
-allowing users to approve/deny/respond from their phone. Coexists with the
-browser UI — first responder wins.
+Maintains one Feishu card per active session. Card content updates as session
+state changes (permission_prompt, idle, busy, elicitation, plan_review).
+Prompt delivery uses /api/send-prompt (tmux).
 
 Requires: pip install lark-oapi
 Config:   config.json (see config.example.json)
@@ -45,12 +45,19 @@ def _server_post(path, body):
         return False
 
 
-def _write_exclusive(filepath, data):
-    """Atomically create a file only if it doesn't exist (O_CREAT|O_EXCL).
+def _server_get(path):
+    """GET JSON from the local WebUI server. Returns parsed dict or None."""
+    try:
+        req = urllib.request.Request(f"{_SERVER_BASE}{path}")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        print(f"[feishu] Server API GET {path} failed: {e}")
+        return None
 
-    Returns True if written, False if file already exists.
-    Raises IOError on other failures.
-    """
+
+def _write_exclusive(filepath, data):
+    """Atomically create a file only if it doesn't exist (O_CREAT|O_EXCL)."""
     try:
         fd = os.open(filepath, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         with os.fdopen(fd, "w") as f:
@@ -66,8 +73,10 @@ def _write_exclusive(filepath, data):
 _client = None          # lark.Client for REST API calls
 _ws_client = None       # lark.ws.Client for WebSocket events
 _target_open_id = None  # Auto-discovered user open_id
-_notified = set()       # Request IDs already pushed to Feishu
-_card_ids = {}          # request_id → feishu message_id (for updating cards)
+_session_cards = {}     # session_id → feishu message_id
+_session_states = {}    # session_id → last known state string (to detect changes)
+_notified_requests = set()  # permission request IDs already sent
+_request_card_ids = {}  # request_id → feishu message_id (for permission cards)
 _lock = threading.Lock()
 
 # ── Config ──
@@ -77,10 +86,7 @@ def _config_path():
 
 
 def load_config():
-    """Load Feishu config from config.json next to this file.
-
-    Returns the feishu dict (including open_id if previously saved), or None.
-    """
+    """Load Feishu config from config.json next to this file."""
     path = _config_path()
     if not os.path.exists(path):
         return None
@@ -112,16 +118,27 @@ def _save_open_id(open_id):
 # ── Card builders ──
 
 _TOOL_COLORS = {
-    "Bash": "red",
-    "mcp__acp__Bash": "red",
-    "Write": "orange",
-    "mcp__acp__Write": "orange",
-    "Edit": "orange",
-    "mcp__acp__Edit": "orange",
-    "WebFetch": "blue",
-    "WebSearch": "blue",
-    "ExitPlanMode": "purple",
-    "AskUserQuestion": "green",
+    "Bash": "red", "mcp__acp__Bash": "red",
+    "Write": "orange", "mcp__acp__Write": "orange",
+    "Edit": "orange", "mcp__acp__Edit": "orange",
+    "WebFetch": "blue", "WebSearch": "blue",
+    "ExitPlanMode": "purple", "AskUserQuestion": "green",
+}
+
+_STATE_COLORS = {
+    "idle": "green",
+    "busy": "blue",
+    "permission_prompt": "red",
+    "elicitation": "turquoise",
+    "plan_review": "purple",
+}
+
+_STATE_LABELS = {
+    "idle": "Waiting for input",
+    "busy": "Working...",
+    "permission_prompt": "Needs approval",
+    "elicitation": "Question",
+    "plan_review": "Plan review",
 }
 
 
@@ -148,7 +165,6 @@ def _build_permission_card(request_id, data):
 
     elements = []
 
-    # Project & session info
     if project_dir:
         project_name = os.path.basename(project_dir)
         elements.append({
@@ -156,31 +172,26 @@ def _build_permission_card(request_id, data):
             "content": f"**Project:** {project_name}  |  **Session:** {session_id}"
         })
 
-    # Detail (command, file path, etc.)
     if detail:
         elements.append({
             "tag": "markdown",
             "content": f"```\n{_truncate(detail, 1500)}\n```"
         })
 
-    # Sub-detail (old_string for Edit, prompt for WebFetch, etc.)
     if detail_sub:
         elements.append({
             "tag": "markdown",
             "content": f"_{_truncate(detail_sub, 500)}_"
         })
 
-    # Divider before buttons
     elements.append({"tag": "hr"})
 
-    # Allow pattern display
     if allow_pattern:
         elements.append({
             "tag": "markdown",
             "content": f"Pattern: `{allow_pattern}`"
         })
 
-    # Action buttons (value must be a dict, not a JSON string)
     elements.append({
         "tag": "action",
         "actions": [
@@ -188,31 +199,19 @@ def _build_permission_card(request_id, data):
                 "tag": "button",
                 "text": {"tag": "plain_text", "content": "Allow"},
                 "type": "primary",
-                "value": {
-                    "request_id": request_id,
-                    "decision": "allow",
-                    "type": "permission"
-                }
+                "value": {"request_id": request_id, "decision": "allow", "type": "permission"}
             },
             {
                 "tag": "button",
                 "text": {"tag": "plain_text", "content": "Always Allow"},
                 "type": "default",
-                "value": {
-                    "request_id": request_id,
-                    "decision": "always",
-                    "type": "permission"
-                }
+                "value": {"request_id": request_id, "decision": "always", "type": "permission"}
             },
             {
                 "tag": "button",
                 "text": {"tag": "plain_text", "content": "Deny"},
                 "type": "danger",
-                "value": {
-                    "request_id": request_id,
-                    "decision": "deny",
-                    "type": "permission"
-                }
+                "value": {"request_id": request_id, "decision": "deny", "type": "permission"}
             },
         ]
     })
@@ -227,25 +226,23 @@ def _build_permission_card(request_id, data):
     }
 
 
-def _build_prompt_card(request_id, data):
-    """Build a card for prompt-waiting (Claude finished, waiting for next prompt)."""
-    last_response = data.get("last_response", "")
-    project_dir = data.get("project_dir", "")
-    session_id = data.get("session_id", "")
+def _build_idle_card(session):
+    """Build a card for an idle session (waiting for input)."""
+    project_dir = session.get("cwd", "")
+    session_id = session.get("session_id", "")
+    summary = session.get("last_summary", "")
+    project_name = os.path.basename(project_dir) if project_dir else "?"
 
     elements = []
+    elements.append({
+        "tag": "markdown",
+        "content": f"**Project:** {project_name}  |  **Session:** {session_id}"
+    })
 
-    if project_dir:
-        project_name = os.path.basename(project_dir)
+    if summary:
         elements.append({
             "tag": "markdown",
-            "content": f"**Project:** {project_name}  |  **Session:** {session_id}"
-        })
-
-    if last_response:
-        elements.append({
-            "tag": "markdown",
-            "content": f"```\n{_truncate(last_response)}\n```"
+            "content": f"```\n{_truncate(summary)}\n```"
         })
     else:
         elements.append({
@@ -254,26 +251,9 @@ def _build_prompt_card(request_id, data):
         })
 
     elements.append({"tag": "hr"})
-
     elements.append({
         "tag": "markdown",
-        "content": "**Reply to this bot with your next prompt**, or dismiss:"
-    })
-
-    elements.append({
-        "tag": "action",
-        "actions": [
-            {
-                "tag": "button",
-                "text": {"tag": "plain_text", "content": "Dismiss"},
-                "type": "default",
-                "value": {
-                    "request_id": request_id,
-                    "decision": "dismiss",
-                    "type": "prompt"
-                }
-            }
-        ]
+        "content": "**Reply to this bot** with your next prompt for this session."
     })
 
     return {
@@ -368,7 +348,7 @@ def _send_text(open_id, text):
 # ── Settings helper (for "Always Allow") ──
 
 def _add_to_settings(settings_file, pattern):
-    """Add an allow pattern to settings.local.json (same logic as server.py)."""
+    """Add an allow pattern to settings.local.json."""
     try:
         if os.path.exists(settings_file):
             with open(settings_file) as f:
@@ -400,7 +380,6 @@ def _handle_message(data):
     message = data.event.message
     sender = data.event.sender
 
-    # Extract sender open_id
     open_id = sender.sender_id.open_id if sender and sender.sender_id else None
     if not open_id:
         return
@@ -420,7 +399,6 @@ def _handle_message(data):
             _reply_text(message_id, "Connected! You will now receive Claude Code notifications here.")
         return
 
-    # Subsequent messages: treat as prompt submission
     if open_id != _target_open_id:
         return
 
@@ -438,32 +416,31 @@ def _handle_message(data):
     if not text:
         return
 
-    # Find the most recent prompt-waiting file and submit via server API
-    prompt_files = sorted(
-        glob.glob(os.path.join(QUEUE_DIR, "*.prompt-waiting.json")),
-        key=os.path.getmtime,
-        reverse=True
-    )
-
-    for wf in prompt_files:
-        request_id = os.path.basename(wf).replace(".prompt-waiting.json", "")
-        if not _server_post("/api/submit-prompt", {"id": request_id, "prompt": text}):
-            continue
-        print(f"[feishu] Prompt submitted for {request_id}: {text[:80]}")
-
-        # Delete the Feishu card if we have one
-        with _lock:
-            mid = _card_ids.get(request_id)
-        if mid:
-            _delete_message(mid)
-
+    # Find an idle session to send the prompt to (most recent idle, or most recent overall)
+    sessions_data = _server_get("/api/sessions")
+    if not sessions_data:
         if message_id:
-            _reply_text(message_id, f"Prompt sent to Claude.")
+            _reply_text(message_id, "Server not available.")
         return
 
-    # No pending prompt-waiting
-    if message_id:
-        _reply_text(message_id, "No pending prompt request. Your message was not delivered to Claude.")
+    sessions = sessions_data.get("sessions", [])
+    if not sessions:
+        if message_id:
+            _reply_text(message_id, "No active Claude sessions.")
+        return
+
+    # Prefer idle sessions, then fall back to most recent
+    idle_sessions = [s for s in sessions if s.get("state") == "idle"]
+    target = idle_sessions[0] if idle_sessions else sessions[0]
+    sid = target.get("session_id", "")
+
+    if _server_post("/api/send-prompt", {"session_id": sid, "prompt": text}):
+        print(f"[feishu] Prompt sent to session {sid}: {text[:80]}")
+        if message_id:
+            _reply_text(message_id, f"Prompt sent to session {sid}.")
+    else:
+        if message_id:
+            _reply_text(message_id, "Failed to send prompt.")
 
 
 def _handle_card_action(data):
@@ -474,7 +451,6 @@ def _handle_card_action(data):
     if not action:
         return P2CardActionTriggerResponse({"toast": {"type": "info", "content": "No action"}})
 
-    # action.value is a Dict[str, Any]
     value = action.value or {}
     if isinstance(value, str):
         try:
@@ -494,8 +470,6 @@ def _handle_card_action(data):
 
     if action_type == "permission":
         return _handle_permission_action(request_id, decision, value)
-    elif action_type == "prompt":
-        return _handle_prompt_action(request_id, decision)
 
     return P2CardActionTriggerResponse({"toast": {"type": "info", "content": "Unknown action type"}})
 
@@ -510,7 +484,6 @@ def _handle_permission_action(request_id, decision, value):
     if not os.path.exists(request_file):
         return P2CardActionTriggerResponse({"toast": {"type": "warning", "content": "Request expired"}})
 
-    # Read request data before writing response (needed for "always allow")
     req_data = {}
     try:
         with open(request_file) as f:
@@ -518,7 +491,6 @@ def _handle_permission_action(request_id, decision, value):
     except (json.JSONDecodeError, IOError):
         pass
 
-    # Write response atomically (first responder wins)
     resp_decision = "allow" if decision in ("allow", "always") else "deny"
     resp_data = {"decision": resp_decision}
     if decision == "deny":
@@ -531,10 +503,8 @@ def _handle_permission_action(request_id, decision, value):
         print(f"[feishu] Failed to write response: {e}")
         return P2CardActionTriggerResponse({"toast": {"type": "error", "content": "Write failed"}})
 
-    # Handle "Always Allow" — write to settings (only after winning the race)
     if decision == "always":
         settings_file = req_data.get("settings_file", "")
-        # Validate settings_file points to a .claude/ directory
         if settings_file and "/.claude/" in settings_file:
             allow_patterns = req_data.get("allow_patterns") or []
             if not allow_patterns:
@@ -544,17 +514,9 @@ def _handle_permission_action(request_id, decision, value):
             for pattern in allow_patterns:
                 _add_to_settings(settings_file, pattern)
 
-    # Read tool name for the resolved card
-    tool_name = ""
-    try:
-        with open(request_file) as f:
-            tool_name = json.load(f).get("tool_name", "")
-    except (json.JSONDecodeError, IOError):
-        pass
-
-    # Update the card to show resolved status
+    # Delete the permission card
     with _lock:
-        mid = _card_ids.get(request_id)
+        mid = _request_card_ids.pop(request_id, None)
     if mid:
         _delete_message(mid)
 
@@ -562,47 +524,38 @@ def _handle_permission_action(request_id, decision, value):
     return P2CardActionTriggerResponse({"toast": {"type": "success", "content": label}})
 
 
-def _handle_prompt_action(request_id, decision):
-    """Process a prompt card button click (Dismiss)."""
-    from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse
-
-    if not _server_post("/api/dismiss-prompt", {"id": request_id}):
-        return P2CardActionTriggerResponse({"toast": {"type": "error", "content": "Dismiss failed"}})
-    print(f"[feishu] Prompt dismissed for {request_id}")
-
-    with _lock:
-        mid = _card_ids.get(request_id)
-    if mid:
-        _delete_message(mid)
-
-    return P2CardActionTriggerResponse({"toast": {"type": "success", "content": "Dismissed"}})
-
-
 # ── Notification loop ──
 
 def _notification_loop():
-    """Background thread: scan for new requests and update Feishu cards."""
+    """Background thread: poll /api/sessions and manage Feishu cards."""
     while True:
         try:
             _scan_once()
         except Exception as e:
             print(f"[feishu] Notification loop error: {e}")
-        time.sleep(0.5)
+        time.sleep(1)
 
 
 def _scan_once():
-    """Single scan iteration — aligned with /api/pending logic from WebUI."""
+    """Single scan iteration — poll sessions and permission requests."""
     global _target_open_id
 
     if _target_open_id is None:
         return
 
+    # Poll sessions from server
+    sessions_data = _server_get("/api/sessions")
+    if not sessions_data:
+        return
+
+    sessions = sessions_data.get("sessions", [])
+    current_sids = {s["session_id"] for s in sessions}
+
+    # Stage 1: Handle permission requests (separate cards per request)
     with _lock:
-        notified_snapshot = set(_notified)
+        notified_snapshot = set(_notified_requests)
 
-    # Stage 1: Build pending set (same criteria as /api/pending)
-    pending = {}  # request_id → (data, type)
-
+    pending = {}
     for path in glob.glob(os.path.join(QUEUE_DIR, "*.request.json")):
         request_id = os.path.basename(path).replace(".request.json", "")
         resp = path.replace(".request.json", ".response.json")
@@ -613,48 +566,73 @@ def _scan_once():
                 data = json.load(f)
         except (json.JSONDecodeError, IOError):
             continue
-        pending[request_id] = (data, "permission")
-
-    for path in glob.glob(os.path.join(QUEUE_DIR, "*.prompt-waiting.json")):
-        request_id = os.path.basename(path).replace(".prompt-waiting.json", "")
-        resp = path.replace(".prompt-waiting.json", ".prompt-response.json")
-        if os.path.exists(resp):
-            continue
-        try:
-            with open(path) as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, IOError):
-            continue
-        pending[request_id] = (data, "prompt")
+        pending[request_id] = data
 
     pending_ids = set(pending.keys())
 
-    # Stage 2a: Resolved requests → delete cards
-    # (anything previously notified but no longer pending, regardless of reason)
+    # Resolved permission requests → delete cards
     resolved = notified_snapshot - pending_ids
     resolved_mids = []
     with _lock:
         for rid in resolved:
-            mid = _card_ids.pop(rid, None)
+            mid = _request_card_ids.pop(rid, None)
             if mid:
                 resolved_mids.append(mid)
-            _notified.discard(rid)
+            _notified_requests.discard(rid)
     for mid in resolved_mids:
         _delete_message(mid)
 
-    # Stage 2b: New requests → send cards
-    for rid, (data, rtype) in pending.items():
+    # New permission requests → send cards
+    for rid, data in pending.items():
         if rid in notified_snapshot:
             continue
-        if rtype == "permission":
-            card = _build_permission_card(rid, data)
-        else:
-            card = _build_prompt_card(rid, data)
+        card = _build_permission_card(rid, data)
         mid = _send_card(_target_open_id, card)
         with _lock:
-            _notified.add(rid)
+            _notified_requests.add(rid)
             if mid:
-                _card_ids[rid] = mid
+                _request_card_ids[rid] = mid
+
+    # Stage 2: Per-session idle cards
+    # Send/delete idle notification cards when session becomes idle or leaves idle
+    with _lock:
+        prev_states = dict(_session_states)
+
+    for s in sessions:
+        sid = s["session_id"]
+        state = s.get("state", "busy")
+        prev_state = prev_states.get(sid)
+
+        with _lock:
+            _session_states[sid] = state
+
+        # Session became idle → send idle card
+        if state == "idle" and prev_state != "idle":
+            card = _build_idle_card(s)
+            mid = _send_card(_target_open_id, card)
+            with _lock:
+                old_mid = _session_cards.pop(sid, None)
+            if old_mid:
+                _delete_message(old_mid)
+            if mid:
+                with _lock:
+                    _session_cards[sid] = mid
+
+        # Session left idle → delete idle card
+        elif state != "idle" and prev_state == "idle":
+            with _lock:
+                mid = _session_cards.pop(sid, None)
+            if mid:
+                _delete_message(mid)
+
+    # Stage 3: Ended sessions → delete cards
+    with _lock:
+        ended_sids = set(_session_states.keys()) - current_sids
+        for sid in ended_sids:
+            _session_states.pop(sid, None)
+            mid = _session_cards.pop(sid, None)
+            if mid:
+                _delete_message(mid)
 
 
 # ── Public entry point ──
@@ -664,7 +642,7 @@ def _patch_ws_card_callback(ws_client):
 
     The lark-oapi SDK (v1.5.3) ws.Client._handle_data_frame has:
         elif message_type == MessageType.CARD:
-            return   # ← does nothing, no response sent
+            return   # does nothing, no response sent
     This causes Feishu error 200340 on card button clicks.
 
     We replace _handle_data_frame to route CARD messages through the
@@ -695,7 +673,6 @@ def _patch_ws_card_callback(ws_client):
         if message_type != MessageType.CARD:
             return await original_handle(frame)
 
-        # Handle CARD callback
         pl = frame.payload
         resp = Response(code=http_module.HTTPStatus.OK)
         try:
@@ -723,9 +700,7 @@ def start_feishu_channel():
     Called from server.py main(). Starts the WebSocket client and
     notification loop in background threads. Raises on config/SDK errors.
     """
-    global _client, _ws_client
-
-    global _target_open_id
+    global _client, _ws_client, _target_open_id
 
     cfg = load_config()
     if cfg is None:
@@ -738,7 +713,6 @@ def start_feishu_channel():
         print("[feishu] lark-oapi not installed (pip install lark-oapi), skipping")
         return
 
-    # Restore persisted open_id
     saved_open_id = cfg.get("open_id")
     if saved_open_id:
         _target_open_id = saved_open_id
@@ -747,20 +721,17 @@ def start_feishu_channel():
     app_id = cfg["app_id"]
     app_secret = cfg["app_secret"]
 
-    # HTTP client for sending messages
     _client = lark.Client.builder() \
         .app_id(app_id) \
         .app_secret(app_secret) \
         .log_level(lark.LogLevel.INFO) \
         .build()
 
-    # Event dispatcher
     handler = lark.EventDispatcherHandler.builder("", "") \
         .register_p2_im_message_receive_v1(_handle_message) \
         .register_p2_card_action_trigger(_handle_card_action) \
         .build()
 
-    # WebSocket client (DEBUG to diagnose card callback)
     _ws_client = lark.ws.Client(
         app_id=app_id,
         app_secret=app_secret,
@@ -768,16 +739,11 @@ def start_feishu_channel():
         log_level=lark.LogLevel.INFO
     )
 
-    # Patch: SDK ws.Client ignores CARD messages (returns early at line 264).
-    # We monkey-patch _handle_data_frame to route CARD messages through the
-    # event dispatcher's callback processor, so card button clicks work.
     _patch_ws_card_callback(_ws_client)
 
-    # Start WS in background thread
     ws_thread = threading.Thread(target=_ws_client.start, daemon=True)
     ws_thread.start()
 
-    # Start notification loop in background thread
     notify_thread = threading.Thread(target=_notification_loop, daemon=True)
     notify_thread.start()
 
