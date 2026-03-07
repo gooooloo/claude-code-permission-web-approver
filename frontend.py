@@ -751,7 +751,7 @@ function renderDashboard(sessions) {
       html += '<button class="sc-prompt-send" onclick="sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')">Send</button>';
       html += '</div>';
       html += '<div class="sc-shortcut-row" onclick="event.stopPropagation()">';
-      html += '<button class="sc-shortcut-btn" onclick="document.getElementById(\\'dashPrompt-' + esc(s.session_id) + '\\').value=\\'/clear\\';document.getElementById(\\'dashPrompt-' + esc(s.session_id) + '\\').focus()">/clear</button>';
+      html += '<button class="sc-shortcut-btn" onclick="insertAtCursor(\\'dashPrompt-' + esc(s.session_id) + '\\',\\'/clear\\')">/clear</button>';
       html += '</div>';
     }
     html += '</div>';
@@ -1261,6 +1261,16 @@ async function quickPrompt(prompt) {
       body: JSON.stringify({session_id: currentSessionId, prompt})
     });
   } catch (e) {}
+}
+
+function insertAtCursor(inputId, text) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.focus();
+  const start = input.selectionStart;
+  const end = input.selectionEnd;
+  input.value = input.value.substring(0, start) + text + input.value.substring(end);
+  input.selectionStart = input.selectionEnd = start + text.length;
 }
 
 async function sendDashboardPrompt(sessionId) {
