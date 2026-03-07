@@ -90,6 +90,21 @@ HTML_PAGE = """<!DOCTYPE html>
     gap: 10px;
     margin-bottom: 2px;
   }
+  .sc-collapse-btn {
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 2px 6px;
+    line-height: 1;
+    transition: transform 0.2s;
+  }
+  .sc-collapse-btn:hover { color: #a78bfa; }
+  .sc-collapse-btn { margin-left: -8px; }
+  .sc-project + .sc-collapse-btn { margin-left: auto; }
+  .session-card.collapsed .sc-collapse-btn { transform: rotate(-90deg); }
+  .session-card.collapsed .sc-body { display: none; }
   .sc-sid-row {
     margin-bottom: 6px;
   }
@@ -635,6 +650,19 @@ function esc(s) {
   return d.innerHTML;
 }
 
+function getCollapsedSet() {
+  try { return new Set(JSON.parse(localStorage.getItem('collapsed_sessions') || '[]')); }
+  catch { return new Set(); }
+}
+function isCollapsed(sid) { return getCollapsedSet().has(sid); }
+function toggleCollapse(sid, btn) {
+  const set = getCollapsedSet();
+  if (set.has(sid)) set.delete(sid); else set.add(sid);
+  localStorage.setItem('collapsed_sessions', JSON.stringify([...set]));
+  lastDashboardHash = '';
+  poll();
+}
+
 function renderMarkdown(text) {
   let s = esc(text.trim());
   // Parse tables before other transformations
@@ -717,6 +745,8 @@ function renderDashboard(sessions) {
   if (focused && focused.classList.contains('sc-prompt-input')) return;
   lastDashboardHash = hash;
 
+  const collapsedSet = getCollapsedSet();
+  sessions.sort((a, b) => (collapsedSet.has(a.session_id) ? 1 : 0) - (collapsedSet.has(b.session_id) ? 1 : 0));
   let html = '';
   sessions.forEach(s => {
     const project = (s.cwd || '').split('/').pop() || '?';
@@ -725,12 +755,15 @@ function renderDashboard(sessions) {
     const userPrompt = esc(s.last_user_prompt || '');
     const time = s.last_activity ? new Date(s.last_activity * 1000).toLocaleTimeString() : '';
     const hue = sessionHue(s.session_id);
-    html += '<div class="session-card state-' + state + '" style="--sh:' + hue + '" onclick="openSession(\\'' + esc(s.session_id) + '\\')">';
+    const collapsed = isCollapsed(s.session_id) ? ' collapsed' : '';
+    html += '<div class="session-card state-' + state + collapsed + '" style="--sh:' + hue + '" onclick="openSession(\\'' + esc(s.session_id) + '\\')">';
     html += '<div class="sc-top">';
     html += '<span class="state-badge badge-' + state + '">' + stateLabel(state) + '</span>';
     html += '<span class="sc-project">' + esc(project) + '</span>';
     if (time) html += '<span class="sc-time">' + time + '</span>';
+    html += '<button class="sc-collapse-btn" onclick="event.stopPropagation();toggleCollapse(\\'' + esc(s.session_id) + '\\',this)" title="Collapse/Expand">&#9660;</button>';
     html += '</div>';
+    html += '<div class="sc-body">';
     html += '<div class="sc-sid-row"><span class="sc-sid">' + esc(s.session_id) + '</span></div>';
     if (userPrompt) html += '<div class="sc-user-prompt">' + userPrompt + '</div>';
     if (summary) html += '<div class="sc-summary">' + renderMarkdown(s.last_summary || '') + '</div>';
@@ -755,6 +788,7 @@ function renderDashboard(sessions) {
       html += '<button class="sc-shortcut-btn" onclick="insertAtCursor(\\'dashPrompt-' + esc(s.session_id) + '\\',\\'/clear\\')">/clear</button>';
       html += '</div>';
     }
+    html += '</div>'; // close .sc-body
     html += '</div>';
   });
   el.innerHTML = html;
