@@ -21,19 +21,34 @@ HTML_PAGE = """<!DOCTYPE html>
   .header {
     padding: 16px 24px;
     display: flex;
-    align-items: center;
+    align-items: stretch;
     gap: 12px;
     border-bottom: 1px solid #2a2a4a;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: #1a1a2e;
   }
   .header h1 {
     font-size: 18px;
     color: #a78bfa;
+    display: flex;
+    align-items: center;
   }
-  .header .status {
-    font-size: 12px;
-    color: #888;
+  .btn-scroll-bottom {
     margin-left: auto;
+    background: #2a2a4a;
+    color: #a78bfa;
+    border: none;
+    padding: 4px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    display: none;
+    align-items: center;
+    justify-content: center;
   }
+  .btn-scroll-bottom:hover { background: #3a3a5a; }
   .header .back-btn {
     background: #2a2a4a;
     color: #a78bfa;
@@ -43,6 +58,8 @@ HTML_PAGE = """<!DOCTYPE html>
     cursor: pointer;
     font-size: 13px;
     display: none;
+    align-items: center;
+    justify-content: center;
   }
   .header .back-btn:hover { background: #3a3a5a; }
   .container { padding: 16px 24px; }
@@ -220,8 +237,6 @@ HTML_PAGE = """<!DOCTYPE html>
   /* ── Session detail view ── */
   .session-detail { display: none; }
   .transcript-view {
-    max-height: calc(100vh - 280px);
-    overflow-y: auto;
     margin-bottom: 16px;
     padding-right: 8px;
   }
@@ -444,7 +459,6 @@ HTML_PAGE = """<!DOCTYPE html>
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 8px;
   }
   .btn-upload-image {
     background: #1e293b;
@@ -498,17 +512,22 @@ HTML_PAGE = """<!DOCTYPE html>
     font-size: 16px;
     font-family: monospace;
     line-height: 1.5;
-    resize: vertical;
+    resize: none;
     min-height: 44px;
-    max-height: 200px;
+    overflow-y: hidden;
   }
   .prompt-input:focus { outline: none; border-color: #a78bfa; }
   .prompt-input::placeholder { color: #555; }
+  .prompt-bottom-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 8px;
+  }
   .quick-actions {
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
-    margin-bottom: 8px;
   }
   .btn-quick {
     background: #1e1e3a;
@@ -578,8 +597,16 @@ HTML_PAGE = """<!DOCTYPE html>
   }
 
   @media (max-width: 600px) {
-    .container { padding: 12px; }
-    .prompt-area { padding: 12px; }
+    .container { padding: 8px 12px; }
+    .header { padding: 10px 12px; gap: 8px; }
+    .header h1 { font-size: 14px; }
+    .header .back-btn { padding: 4px 10px; font-size: 12px; }
+    .prompt-area { padding: 8px 12px; }
+    .prompt-input { font-size: 14px; padding: 8px 10px; min-height: 36px; }
+    .btn-send { padding: 8px 16px; font-size: 13px; }
+    .quick-actions { margin-bottom: 6px; }
+    .btn-quick { padding: 3px 8px; font-size: 12px; }
+    .image-upload-area { margin-bottom: 6px; }
     .session-card { padding: 12px 14px; }
     .perm-card { padding: 12px 14px; }
     .buttons { flex-wrap: wrap; gap: 8px; }
@@ -590,8 +617,8 @@ HTML_PAGE = """<!DOCTYPE html>
 <body>
 <div class="header">
   <button class="back-btn" id="backBtn" onclick="showDashboard()">Back</button>
-  <h1 id="pageTitle">Claude Sessions</h1>
-  <span class="status" id="status">Connected</span>
+  <h1 id="pageTitle" ondblclick="window.scrollTo({top:0,behavior:'smooth'})">Claude Sessions</h1>
+  <button class="btn-scroll-bottom" id="scrollBottomBtn" onclick="window.scrollTo({top:document.documentElement.scrollHeight,behavior:'smooth'})">Bottom</button>
 </div>
 
 <!-- Dashboard view -->
@@ -606,18 +633,20 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="transcript-view" id="transcriptView"></div>
   </div>
   <div class="prompt-area" id="promptArea">
-    <div class="quick-actions">
-      <button class="btn-quick" onclick="quickPrompt('/compact')">/compact</button>
-      <button class="btn-quick" onclick="quickPrompt('/clear')">/clear</button>
-    </div>
-    <div class="image-upload-area">
-      <input type="file" id="imageFile" accept="image/*" style="display:none" onchange="handleImageFile(this)">
-      <button class="btn-upload-image" onclick="document.getElementById('imageFile').click()">+ Image</button>
-      <div class="image-preview-area" id="imagePreview"></div>
-    </div>
     <div class="prompt-row">
-      <textarea class="prompt-input" id="promptInput" placeholder="Send a prompt to this session..." rows="1"></textarea>
+      <textarea class="prompt-input" id="promptInput" placeholder="Send a prompt..." rows="1" oninput="autoResize(this)"></textarea>
       <button class="btn-send" onclick="sendPrompt()">Send</button>
+    </div>
+    <div class="prompt-bottom-row">
+      <div class="quick-actions">
+        <button class="btn-quick" onclick="quickPrompt('/compact')">/compact</button>
+        <button class="btn-quick" onclick="quickPrompt('/clear')">/clear</button>
+      </div>
+      <div class="image-upload-area">
+        <input type="file" id="imageFile" accept="image/*" style="display:none" onchange="handleImageFile(this)">
+        <button class="btn-upload-image" onclick="document.getElementById('imageFile').click()">+ Image</button>
+        <div class="image-preview-area" id="imagePreview"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -733,10 +762,9 @@ async function fetchSessions() {
   try {
     const res = await fetch('/api/sessions');
     const data = await res.json();
-    document.getElementById('status').textContent = 'Last checked: ' + new Date().toLocaleTimeString();
     renderDashboard(data.sessions || []);
   } catch (e) {
-    document.getElementById('status').textContent = 'Connection error';
+    // connection error, silently retry on next poll
   }
 }
 
@@ -871,7 +899,8 @@ function openSession(sid) {
   location.hash = 'session/' + sid;
   document.getElementById('dashboardView').style.display = 'none';
   document.getElementById('detailView').style.display = 'block';
-  document.getElementById('backBtn').style.display = 'block';
+  document.getElementById('backBtn').style.display = 'flex';
+  document.getElementById('scrollBottomBtn').style.display = 'flex';
   document.getElementById('pageTitle').textContent = 'Session ' + sid;
   document.getElementById('transcriptView').innerHTML = '';
   document.getElementById('permCards').innerHTML = '';
@@ -888,6 +917,7 @@ function showDashboard() {
   document.getElementById('dashboardView').style.display = 'block';
   document.getElementById('detailView').style.display = 'none';
   document.getElementById('backBtn').style.display = 'none';
+  document.getElementById('scrollBottomBtn').style.display = 'none';
   document.getElementById('pageTitle').textContent = 'Claude Sessions';
   stopDetailPolling();
   lastDashboardHash = '';
@@ -918,7 +948,7 @@ async function fetchSessionDetail() {
     renderPermCards(session);
 
     // Fetch transcript
-    const tRes = await fetch('/api/session/' + currentSessionId + '/transcript?limit=50');
+    const tRes = await fetch('/api/session/' + currentSessionId + '/transcript?limit=500');
     const tData = await tRes.json();
     renderTranscript(tData.entries || []);
   } catch (e) {
@@ -1135,7 +1165,8 @@ function renderTranscript(entries) {
   const tHash = entries.length + ':' + (entries.length > 0 ? JSON.stringify(entries[entries.length - 1]).length : 0);
   if (tHash === lastTranscriptHash) return;
   lastTranscriptHash = tHash;
-  const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  const docEl = document.documentElement;
+  const wasAtBottom = docEl.scrollHeight - docEl.scrollTop - docEl.clientHeight < 80;
   let html = '';
   entries.forEach(e => {
     if (e.type === 'user') {
@@ -1178,7 +1209,7 @@ function renderTranscript(entries) {
   });
   el.innerHTML = html || '<div style="color:#555;text-align:center;padding:40px">No transcript entries</div>';
   // Only auto-scroll if user was already at the bottom
-  if (wasAtBottom) el.scrollTop = el.scrollHeight;
+  if (wasAtBottom) window.scrollTo(0, document.documentElement.scrollHeight);
 }
 
 // ── Actions ──
@@ -1357,6 +1388,11 @@ async function sendPrompt() {
   } catch (e) {
     console.error('Failed to send prompt:', e);
   }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
 }
 
 async function quickPrompt(prompt) {
