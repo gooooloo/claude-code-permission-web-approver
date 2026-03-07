@@ -661,10 +661,15 @@ function toggleCollapse(sid, btn) {
   localStorage.setItem('collapsed_sessions', JSON.stringify([...set]));
   const card = btn.closest('.session-card');
   if (card) card.classList.toggle('collapsed');
-  // Re-sort cards: expanded before collapsed
+  // Re-sort cards: expanded before collapsed, then by activity desc
   const el = document.getElementById('sessionList');
   const cards = [...el.querySelectorAll('.session-card[data-sid]')];
-  cards.sort((a, b) => (a.classList.contains('collapsed') ? 1 : 0) - (b.classList.contains('collapsed') ? 1 : 0));
+  cards.sort((a, b) => {
+    const ca = a.classList.contains('collapsed') ? 1 : 0;
+    const cb = b.classList.contains('collapsed') ? 1 : 0;
+    if (ca !== cb) return ca - cb;
+    return (parseFloat(b.getAttribute('data-activity'))||0) - (parseFloat(a.getAttribute('data-activity'))||0);
+  });
   cards.forEach(c => el.appendChild(c));
   lastDashboardHash = '';
 }
@@ -785,7 +790,12 @@ function renderDashboard(sessions) {
   document.title = needAttention > 0 ? '(' + needAttention + ') Claude Sessions' : 'Claude Sessions';
 
   const collapsedSet = getCollapsedSet();
-  sessions.sort((a, b) => (collapsedSet.has(a.session_id) ? 1 : 0) - (collapsedSet.has(b.session_id) ? 1 : 0));
+  sessions.sort((a, b) => {
+    const ca = collapsedSet.has(a.session_id) ? 1 : 0;
+    const cb = collapsedSet.has(b.session_id) ? 1 : 0;
+    if (ca !== cb) return ca - cb;
+    return (b.last_activity || 0) - (a.last_activity || 0);
+  });
 
   const desiredOrder = sessions.map(s => s.session_id);
   const existingCards = el.querySelectorAll('.session-card[data-sid]');
@@ -810,6 +820,7 @@ function renderDashboard(sessions) {
       const collapsed = isCollapsed(sid) ? ' collapsed' : '';
       card.className = 'session-card state-' + state + collapsed;
       card.style.cssText = '--sh:' + hue;
+      card.setAttribute('data-activity', s.last_activity || 0);
       // Only update inner content if data changed
       const prev = card.getAttribute('data-hash');
       if (prev !== h) {
@@ -824,6 +835,7 @@ function renderDashboard(sessions) {
       card = document.createElement('div');
       card.setAttribute('data-sid', sid);
       card.setAttribute('data-hash', h);
+      card.setAttribute('data-activity', s.last_activity || 0);
       const collapsed = isCollapsed(sid) ? ' collapsed' : '';
       card.className = 'session-card state-' + state + collapsed;
       card.style.cssText = '--sh:' + hue;
