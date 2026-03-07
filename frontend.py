@@ -919,6 +919,7 @@ function showDashboard() {
   document.getElementById('backBtn').style.display = 'none';
   document.getElementById('scrollBottomBtn').style.display = 'none';
   document.getElementById('pageTitle').textContent = 'Claude Sessions';
+  document.getElementById('pageTitle').style.color = '#a78bfa';
   stopDetailPolling();
   lastDashboardHash = '';
   fetchSessions();
@@ -943,6 +944,14 @@ async function fetchSessionDetail() {
       showDashboard();
       return;
     }
+
+    // Update title with state indicator
+    const state = session.state || 'busy';
+    const titleEl = document.getElementById('pageTitle');
+    const stateColor = {idle: '#4ade80', busy: '#facc15', permission_prompt: '#f87171', elicitation: '#60a5fa', plan_review: '#c084fc'}[state] || '#a78bfa';
+    const stateWord = {idle: 'Idle', busy: 'Busy', permission_prompt: 'Ask', elicitation: 'Ask', plan_review: 'Plan'}[state] || '';
+    titleEl.textContent = currentSessionId + ' ' + stateWord;
+    titleEl.style.color = stateColor;
 
     // Render permission card if applicable
     renderPermCards(session);
