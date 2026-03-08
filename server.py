@@ -9,6 +9,7 @@ Usage: python3 server.py
 Then open http://localhost:19836
 """
 
+import argparse
 import json
 import glob
 import os
@@ -17,6 +18,7 @@ import signal
 import subprocess
 import time
 import threading
+import urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 import uuid
@@ -52,6 +54,11 @@ sessions_lock = threading.Lock()
 
 # Session-level auto-allow rules: { (session_id, tool_name): True }
 session_auto_allow = {}
+
+# ── Federation ──
+remote_servers = []          # [{"name": str, "url": str}]
+local_name = "local"
+session_machine_map = {}     # {session_id: remote_url or None(local)}
 
 
 # ── Transcript parsing ──
@@ -946,6 +953,28 @@ def scan_existing_sessions():
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Claude Code WebUI Server")
+    parser.add_argument("--remotes", help="Path to remotes.json (default: remotes.json in script dir)")
+    parser.add_argument("--name", default="local", help="Name for this machine in dashboard (default: local)")
+    args = parser.parse_args()
+
+    global local_name, remote_servers
+    local_name = args.name
+
+    # Load remotes config
+    remotes_path = args.remotes
+    if not remotes_path:
+        remotes_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "remotes.json")
+    if os.path.isfile(remotes_path):
+        try:
+            with open(remotes_path) as f:
+                remote_servers = json.load(f)
+            print(f"[*] Federation: {len(remote_servers)} remote(s) loaded from {remotes_path}")
+            for r in remote_servers:
+                print(f"    - {r['name']}: {r['url']}")
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"[!] Failed to load remotes: {e}")
+
     os.makedirs(QUEUE_DIR, exist_ok=True)
 
     # Scan for existing sessions before starting
