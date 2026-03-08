@@ -674,6 +674,9 @@ def _extract_first_user_prompt(entries):
             text = re.sub(r"<system-reminder>.*?</system-reminder>", "", text, flags=re.DOTALL)
             text = re.sub(r"<[^>]+>", "", text)
             text = re.sub(r"\s+", " ", text).strip()
+        # Skip noise injected by /clear command
+        if text and (text.startswith("Caveat: The messages below") or text.strip() == "clear"):
+            continue
         if text:
             return text
     return None
