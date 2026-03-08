@@ -949,26 +949,66 @@ function renderDashboard(sessions) {
       });
     });
 
-    // Build grouped HTML
+    // Build grouped HTML with incremental DOM updates
     const groupOrder = [ln, ...federationRemoteNames.filter(n => n !== ln).sort()];
-    let html = '';
+    const newHash = sessions.map(s => s.session_id + ':' + cardHash(s)).join('|');
+    if (newHash === lastDashboardHash) return;
+
+    // Build desired DOM structure
+    const existingById = {};
+    el.querySelectorAll('.session-card[data-sid]').forEach(c => { existingById[c.getAttribute('data-sid')] = c; });
+    const fragment = document.createDocumentFragment();
     groupOrder.forEach(machine => {
       const arr = groups[machine] || [];
-      html += '<div class="machine-group-header">' + esc(machine) + '</div>';
+      let header = el.querySelector('.machine-group-header[data-machine="' + machine + '"]');
+      if (!header) {
+        header = document.createElement('div');
+        header.className = 'machine-group-header';
+        header.setAttribute('data-machine', machine);
+        header.textContent = machine;
+      }
+      fragment.appendChild(header);
       if (arr.length === 0) {
-        html += '<div class="machine-empty">No active sessions</div>';
+        let empty = el.querySelector('.machine-empty[data-machine="' + machine + '"]');
+        if (!empty) {
+          empty = document.createElement('div');
+          empty.className = 'machine-empty';
+          empty.setAttribute('data-machine', machine);
+          empty.textContent = 'No active sessions';
+        }
+        fragment.appendChild(empty);
       }
       arr.forEach(s => {
         const sid = s.session_id;
         const state = s.state || 'busy';
         const hue = sessionHue(sid);
-        const collapsed = isCollapsed(sid) ? ' collapsed' : '';
-        html += '<div class="session-card state-' + state + collapsed + '" data-sid="' + esc(sid) + '" data-hash="' + cardHash(s) + '" style="--sh:' + hue + '">';
-        html += buildCardHTML(s);
-        html += '</div>';
+        const h = cardHash(s);
+        let card = existingById[sid];
+        if (card) {
+          const collapsed = isCollapsed(sid) ? ' collapsed' : '';
+          card.className = 'session-card state-' + state + collapsed;
+          card.style.cssText = '--sh:' + hue;
+          if (card.getAttribute('data-hash') !== h) {
+            const focused = document.activeElement;
+            if (!(focused && focused.id === 'dashPrompt-' + sid)) {
+              card.innerHTML = buildCardHTML(s);
+              card.setAttribute('data-hash', h);
+            }
+          }
+        } else {
+          card = document.createElement('div');
+          card.setAttribute('data-sid', sid);
+          card.setAttribute('data-hash', h);
+          const collapsed = isCollapsed(sid) ? ' collapsed' : '';
+          card.className = 'session-card state-' + state + collapsed;
+          card.style.cssText = '--sh:' + hue;
+          card.innerHTML = buildCardHTML(s);
+        }
+        fragment.appendChild(card);
       });
     });
-    el.innerHTML = html;
+    el.innerHTML = '';
+    el.appendChild(fragment);
   }
 
   lastDashboardHash = sessions.map(s => s.session_id + ':' + cardHash(s)).join('|');
