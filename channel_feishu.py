@@ -2,9 +2,10 @@
 """
 Feishu notification channel for Claude Code WebUI.
 
-Maintains one Feishu card per active session. Card content updates as session
-state changes (permission_prompt, idle, busy, elicitation, plan_review).
-Prompt delivery uses /api/send-prompt (tmux).
+Each Claude Code session maps to a Feishu reply thread. A root card is sent
+when a session starts; all subsequent messages (transcript entries, permission
+requests, state changes) are appended as replies. Threads are preserved after
+session end.
 
 Requires: pip install lark-oapi
 Config:   config.json (see config.example.json)
@@ -22,6 +23,11 @@ import urllib.request
 QUEUE_DIR = "/tmp/claude-webui"
 _SERVER_BASE = "http://127.0.0.1:19836"
 _SAFE_ID_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+# Max transcript messages to send per session per scan (avoid Feishu rate limit)
+_MAX_MESSAGES_PER_SCAN = 5
+# Delay between messages to avoid rate limiting (seconds)
+_MESSAGE_DELAY = 0.2
 
 
 def _is_safe_id(request_id):
@@ -73,10 +79,17 @@ def _write_exclusive(filepath, data):
 _client = None          # lark.Client for REST API calls
 _ws_client = None       # lark.ws.Client for WebSocket events
 _target_open_id = None  # Auto-discovered user open_id
-_session_cards = {}     # session_id → feishu message_id
-_session_states = {}    # session_id → last known state string (to detect changes)
+
+# session_id -> {
+#   "root_message_id": str,     # thread root message ID
+#   "sent_index": int,          # number of transcript entries already sent
+#   "last_state": str,          # last known state (to detect changes)
+#   "pending_request_ids": set, # permission request IDs in this thread
+# }
+_session_threads = {}
+
 _notified_requests = set()  # permission request IDs already sent
-_request_card_ids = {}  # request_id → feishu message_id (for permission cards)
+_request_card_ids = {}      # request_id -> feishu message_id (for card updates)
 _lock = threading.Lock()
 
 # ── Config ──
@@ -226,44 +239,143 @@ def _build_permission_card(request_id, data):
     }
 
 
-def _build_idle_card(session):
-    """Build a card for an idle session (waiting for input)."""
-    project_dir = session.get("cwd", "")
-    session_id = session.get("session_id", "")
-    summary = session.get("last_summary", "")
-    project_name = os.path.basename(project_dir) if project_dir else "?"
+def _build_permission_resolved_card(request_id, data, decision):
+    """Build a card showing a resolved permission request (no buttons)."""
+    tool_name = data.get("tool_name", "Unknown")
+    detail = data.get("detail", "")
+
+    allowed = decision in ("allow", "always")
+    label = "✅ Allowed" if allowed else "❌ Denied"
+    template = "green" if allowed else "red"
 
     elements = []
-    elements.append({
-        "tag": "markdown",
-        "content": f"**Project:** {project_name}  |  **Session:** {session_id}"
-    })
-
-    if summary:
+    if detail:
         elements.append({
             "tag": "markdown",
-            "content": f"```\n{_truncate(summary)}\n```"
+            "content": f"```\n{_truncate(detail, 500)}\n```"
         })
-    else:
-        elements.append({
-            "tag": "markdown",
-            "content": "Claude has completed the current task."
-        })
-
-    elements.append({"tag": "hr"})
     elements.append({
         "tag": "markdown",
-        "content": "**Reply to this bot** with your next prompt for this session."
+        "content": f"**{label}**"
     })
 
     return {
         "config": {"wide_screen_mode": True},
         "header": {
-            "title": {"tag": "plain_text", "content": "💬 Claude is waiting for input"},
-            "template": "green"
+            "title": {"tag": "plain_text", "content": f"🔐 {tool_name}"},
+            "template": template
         },
         "elements": elements
     }
+
+
+def _build_session_root_card(session):
+    """Build the root card for a new session thread."""
+    project_dir = session.get("cwd", "")
+    session_id = session.get("session_id", "")
+    project_name = os.path.basename(project_dir) if project_dir else "?"
+
+    elements = [
+        {
+            "tag": "markdown",
+            "content": f"**Project:** {project_name}"
+        },
+        {
+            "tag": "markdown",
+            "content": f"**Session:** {session_id}"
+        },
+        {
+            "tag": "markdown",
+            "content": f"**Directory:** {project_dir}"
+        },
+    ]
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": f"🚀 Claude Code Session"},
+            "template": "blue"
+        },
+        "elements": elements
+    }
+
+
+# ── Transcript entry formatting ──
+
+def _extract_tool_detail(tool_use):
+    """Extract a human-readable detail string from a tool_use block."""
+    name = tool_use.get("name", "")
+    inp = tool_use.get("input", {})
+    if not isinstance(inp, dict):
+        inp = {}
+
+    if name in ("Bash", "mcp__acp__Bash"):
+        return inp.get("command", "")
+    elif name in ("Write", "Edit", "mcp__acp__Write", "mcp__acp__Edit", "Read"):
+        return inp.get("file_path", "")
+    else:
+        return json.dumps(inp, ensure_ascii=False)[:200]
+
+
+def _format_transcript_entry(entry):
+    """Convert a transcript entry to a list of (label, text) tuples for posting.
+
+    Returns a list because one assistant entry may produce multiple messages
+    (text + tool_use blocks).
+    """
+    etype = entry.get("type", "")
+    msg = entry.get("message", {})
+    content = msg.get("content", "")
+    results = []
+
+    if etype == "user":
+        # Extract user text
+        text = ""
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            parts = []
+            for c in content:
+                if isinstance(c, dict):
+                    if c.get("type") == "text":
+                        parts.append(c.get("text", ""))
+                elif isinstance(c, str):
+                    parts.append(c)
+            text = " ".join(parts)
+
+        # Strip system tags
+        if text:
+            text = re.sub(r"<system-reminder>.*?</system-reminder>", "", text, flags=re.DOTALL)
+            text = re.sub(r"<[^>]+>", "", text)
+            text = re.sub(r"[^\S\n]+", " ", text)
+            text = text.strip()
+
+        if text:
+            results.append(("[You] " + _truncate(text), None))
+
+    elif etype == "assistant":
+        if isinstance(content, str):
+            if content.strip():
+                results.append(("[Claude] " + _truncate(content), None))
+        elif isinstance(content, list):
+            text_parts = []
+            for c in content:
+                if not isinstance(c, dict):
+                    continue
+                if c.get("type") == "text":
+                    t = c.get("text", "")
+                    if t.strip():
+                        text_parts.append(t)
+                elif c.get("type") == "tool_use":
+                    name = c.get("name", "unknown")
+                    detail = _extract_tool_detail(c)
+                    results.append((f"[Tool: {name}] {_truncate(detail, 500)}", None))
+
+            if text_parts:
+                combined = "\n".join(text_parts)
+                results.insert(0, ("[Claude] " + _truncate(combined), None))
+
+    return results
 
 
 # ── Feishu API helpers ──
@@ -292,18 +404,73 @@ def _send_card(open_id, card_content):
         return None
 
 
-def _delete_message(message_id):
-    """Delete a message by message_id."""
+def _reply_card(parent_message_id, card_content):
+    """Reply with an interactive card to a thread. Returns message_id or None."""
     import lark_oapi as lark
-    from lark_oapi.api.im.v1 import DeleteMessageRequest
+    from lark_oapi.api.im.v1 import ReplyMessageRequest, ReplyMessageRequestBody
 
-    request = DeleteMessageRequest.builder() \
-        .message_id(message_id) \
+    body = ReplyMessageRequestBody.builder() \
+        .msg_type("interactive") \
+        .content(json.dumps(card_content)) \
         .build()
 
-    response = _client.im.v1.message.delete(request)
+    request = ReplyMessageRequest.builder() \
+        .message_id(parent_message_id) \
+        .request_body(body) \
+        .build()
+
+    response = _client.im.v1.message.reply(request)
+    if response.success():
+        return response.data.message_id
+    else:
+        print(f"[feishu] Failed to reply card: {response.code} {response.msg}")
+        return None
+
+
+def _reply_post(parent_message_id, text):
+    """Reply with a post (rich text) message to a thread."""
+    import lark_oapi as lark
+    from lark_oapi.api.im.v1 import ReplyMessageRequest, ReplyMessageRequestBody
+
+    # Use post format for richer rendering
+    post_content = {
+        "zh_cn": {
+            "content": [[{"tag": "text", "text": text}]]
+        }
+    }
+
+    body = ReplyMessageRequestBody.builder() \
+        .msg_type("post") \
+        .content(json.dumps(post_content)) \
+        .build()
+
+    request = ReplyMessageRequest.builder() \
+        .message_id(parent_message_id) \
+        .request_body(body) \
+        .build()
+
+    response = _client.im.v1.message.reply(request)
     if not response.success():
-        print(f"[feishu] Failed to delete message: {response.code} {response.msg}")
+        print(f"[feishu] Failed to reply post: {response.code} {response.msg}")
+
+
+def _update_card(message_id, card_content):
+    """Update an existing card's content (e.g. mark permission as resolved)."""
+    import lark_oapi as lark
+    from lark_oapi.api.im.v1 import PatchMessageRequest, PatchMessageRequestBody
+
+    body = PatchMessageRequestBody.builder() \
+        .content(json.dumps(card_content)) \
+        .build()
+
+    request = PatchMessageRequest.builder() \
+        .message_id(message_id) \
+        .request_body(body) \
+        .build()
+
+    response = _client.im.v1.message.patch(request)
+    if not response.success():
+        print(f"[feishu] Failed to update card: {response.code} {response.msg}")
 
 
 def _reply_text(message_id, text):
@@ -371,6 +538,57 @@ def _add_to_settings(settings_file, pattern):
         print(f"[feishu] Failed to update settings: {e}")
 
 
+# ── Thread management ──
+
+def _create_session_thread(session):
+    """Create a root message for a new session thread. Returns message_id or None."""
+    card = _build_session_root_card(session)
+    mid = _send_card(_target_open_id, card)
+    if mid:
+        print(f"[feishu] Created thread for session {session.get('session_id', '?')}")
+    return mid
+
+
+def _sync_transcript(sid, thread):
+    """Fetch transcript and send new entries to the thread. Returns count sent."""
+    root_mid = thread["root_message_id"]
+    sent_index = thread["sent_index"]
+
+    data = _server_get(f"/api/session/{sid}/transcript?limit=500")
+    if not data:
+        return 0
+
+    entries = data.get("entries", [])
+
+    # Handle /clear — if server has fewer entries than we've sent, reset
+    if len(entries) < sent_index:
+        thread["sent_index"] = 0
+        sent_index = 0
+
+    new_entries = entries[sent_index:]
+    if not new_entries:
+        return 0
+
+    count = 0
+    for entry in new_entries:
+        if count >= _MAX_MESSAGES_PER_SCAN:
+            break
+
+        messages = _format_transcript_entry(entry)
+        for text, _ in messages:
+            if not text:
+                continue
+            _reply_post(root_mid, text)
+            count += 1
+            if count >= _MAX_MESSAGES_PER_SCAN:
+                break
+            time.sleep(_MESSAGE_DELAY)
+
+        thread["sent_index"] += 1
+
+    return count
+
+
 # ── Event handlers ──
 
 def _handle_message(data):
@@ -416,7 +634,29 @@ def _handle_message(data):
     if not text:
         return
 
-    # Find an idle session to send the prompt to (most recent idle, or most recent overall)
+    # Check if message is a reply to a session thread → route to that session
+    root_id = getattr(message, 'root_id', None) or ''
+    target_sid = None
+
+    if root_id:
+        with _lock:
+            for sid, thread in _session_threads.items():
+                if thread["root_message_id"] == root_id:
+                    target_sid = sid
+                    break
+
+    if target_sid:
+        # Precise routing: send to the session this thread belongs to
+        if _server_post("/api/send-prompt", {"session_id": target_sid, "prompt": text}):
+            print(f"[feishu] Prompt sent to session {target_sid} (thread match): {text[:80]}")
+            if message_id:
+                _reply_text(message_id, f"Prompt sent to session {target_sid}.")
+        else:
+            if message_id:
+                _reply_text(message_id, "Failed to send prompt.")
+        return
+
+    # Fallback: find an idle session (most recent idle, or most recent overall)
     sessions_data = _server_get("/api/sessions")
     if not sessions_data:
         if message_id:
@@ -429,7 +669,6 @@ def _handle_message(data):
             _reply_text(message_id, "No active Claude sessions.")
         return
 
-    # Prefer idle sessions, then fall back to most recent
     idle_sessions = [s for s in sessions if s.get("state") == "idle"]
     target = idle_sessions[0] if idle_sessions else sessions[0]
     sid = target.get("session_id", "")
@@ -514,11 +753,12 @@ def _handle_permission_action(request_id, decision, value):
             for pattern in allow_patterns:
                 _add_to_settings(settings_file, pattern)
 
-    # Delete the permission card
+    # Update the permission card to show resolved state (no buttons)
     with _lock:
         mid = _request_card_ids.pop(request_id, None)
     if mid:
-        _delete_message(mid)
+        resolved_card = _build_permission_resolved_card(request_id, req_data, decision)
+        _update_card(mid, resolved_card)
 
     label = "Allowed" if decision in ("allow", "always") else "Denied"
     return P2CardActionTriggerResponse({"toast": {"type": "success", "content": label}})
@@ -527,7 +767,7 @@ def _handle_permission_action(request_id, decision, value):
 # ── Notification loop ──
 
 def _notification_loop():
-    """Background thread: poll /api/sessions and manage Feishu cards."""
+    """Background thread: poll /api/sessions and manage Feishu threads."""
     while True:
         try:
             _scan_once()
@@ -537,13 +777,12 @@ def _notification_loop():
 
 
 def _scan_once():
-    """Single scan iteration — poll sessions and permission requests."""
+    """Single scan iteration — poll sessions, sync transcripts, handle permissions."""
     global _target_open_id
 
     if _target_open_id is None:
         return
 
-    # Poll sessions from server
     sessions_data = _server_get("/api/sessions")
     if not sessions_data:
         return
@@ -551,7 +790,50 @@ def _scan_once():
     sessions = sessions_data.get("sessions", [])
     current_sids = {s["session_id"] for s in sessions}
 
-    # Stage 1: Handle permission requests (separate cards per request)
+    # ── Stage 1: Per-session thread management ──
+    for s in sessions:
+        sid = s["session_id"]
+        state = s.get("state", "busy")
+
+        with _lock:
+            thread = _session_threads.get(sid)
+
+        # New session → create thread
+        if thread is None:
+            root_mid = _create_session_thread(s)
+            if not root_mid:
+                continue
+            thread = {
+                "root_message_id": root_mid,
+                "sent_index": 0,
+                "last_state": None,
+                "pending_request_ids": set(),
+            }
+            with _lock:
+                _session_threads[sid] = thread
+
+        # Sync transcript entries
+        _sync_transcript(sid, thread)
+
+        # Detect state changes
+        prev_state = thread["last_state"]
+        thread["last_state"] = state
+
+        if prev_state is not None and prev_state != state:
+            root_mid = thread["root_message_id"]
+            label = _STATE_LABELS.get(state, state)
+
+            if state == "idle":
+                summary = s.get("last_summary", "")
+                msg = f"⏸ {label}"
+                if summary:
+                    msg += f"\n{_truncate(summary, 500)}"
+                msg += "\n\nReply in this thread to send a prompt."
+                _reply_post(root_mid, msg)
+            elif state == "busy" and prev_state == "idle":
+                _reply_post(root_mid, f"▶ {label}")
+
+    # ── Stage 2: Permission requests (sent into session threads) ──
     with _lock:
         notified_snapshot = set(_notified_requests)
 
@@ -570,69 +852,51 @@ def _scan_once():
 
     pending_ids = set(pending.keys())
 
-    # Resolved permission requests → delete cards
+    # Resolved requests → update cards to show resolved state
     resolved = notified_snapshot - pending_ids
-    resolved_mids = []
     with _lock:
         for rid in resolved:
-            mid = _request_card_ids.pop(rid, None)
-            if mid:
-                resolved_mids.append(mid)
+            _request_card_ids.pop(rid, None)
             _notified_requests.discard(rid)
-    for mid in resolved_mids:
-        _delete_message(mid)
+            # Also clean up from session thread tracking
+            for thread in _session_threads.values():
+                thread["pending_request_ids"].discard(rid)
 
-    # New permission requests → send cards
+    # New permission requests → send card into session thread
     for rid, data in pending.items():
         if rid in notified_snapshot:
             continue
+
         card = _build_permission_card(rid, data)
-        mid = _send_card(_target_open_id, card)
+        req_sid = data.get("session_id", "")
+
+        with _lock:
+            thread = _session_threads.get(req_sid)
+
+        if thread:
+            # Send as reply in the session thread
+            mid = _reply_card(thread["root_message_id"], card)
+            if mid:
+                thread["pending_request_ids"].add(rid)
+        else:
+            # No thread found — send as top-level card
+            mid = _send_card(_target_open_id, card)
+
         with _lock:
             _notified_requests.add(rid)
             if mid:
                 _request_card_ids[rid] = mid
 
-    # Stage 2: Per-session idle cards
-    # Send/delete idle notification cards when session becomes idle or leaves idle
+    # ── Stage 3: Ended sessions → send farewell, clean up ──
     with _lock:
-        prev_states = dict(_session_states)
+        ended_sids = set(_session_threads.keys()) - current_sids
 
-    for s in sessions:
-        sid = s["session_id"]
-        state = s.get("state", "busy")
-        prev_state = prev_states.get(sid)
-
+    for sid in ended_sids:
         with _lock:
-            _session_states[sid] = state
-
-        # Session became idle → send idle card
-        if state == "idle" and prev_state != "idle":
-            card = _build_idle_card(s)
-            mid = _send_card(_target_open_id, card)
-            with _lock:
-                old_mid = _session_cards.pop(sid, None)
-            if old_mid:
-                _delete_message(old_mid)
-            if mid:
-                with _lock:
-                    _session_cards[sid] = mid
-
-        # Session left idle → delete idle card
-        elif state != "idle" and prev_state == "idle":
-            with _lock:
-                mid = _session_cards.pop(sid, None)
-            if mid:
-                _delete_message(mid)
-
-    # Stage 3: Ended sessions → delete cards
-    with _lock:
-        ended_sids = set(_session_states.keys()) - current_sids
-        for sid in ended_sids:
-            _session_states.pop(sid, None)
-            mid = _session_cards.pop(sid, None)
-            if mid:
-                _delete_message(mid)
+            thread = _session_threads.pop(sid, None)
+        if thread:
+            _reply_post(thread["root_message_id"], "🏁 Session ended.")
+            print(f"[feishu] Session {sid} ended, thread preserved")
 
 
 # ── Public entry point ──
