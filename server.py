@@ -61,6 +61,34 @@ local_name = "local"
 session_machine_map = {}     # {session_id: remote_url or None(local)}
 
 
+def proxy_to_remote(remote_url, path, method="GET", body=None, headers=None):
+    """Forward a request to a remote WebUI server."""
+    url = remote_url.rstrip("/") + path
+    req = urllib.request.Request(url, data=body, method=method)
+    req.add_header("Content-Type", "application/json")
+    if headers:
+        for k, v in headers.items():
+            req.add_header(k, v)
+    resp = urllib.request.urlopen(req, timeout=5)
+    return resp.status, resp.read(), resp.headers.get("Content-Type", "application/json")
+
+
+def fetch_remote_sessions():
+    """Fetch sessions from all remote servers. Returns list of (remote_config, sessions_or_None)."""
+    results = []
+    for remote in remote_servers:
+        try:
+            url = remote["url"].rstrip("/") + "/api/sessions"
+            req = urllib.request.Request(url)
+            resp = urllib.request.urlopen(req, timeout=3)
+            data = json.loads(resp.read())
+            results.append((remote, data.get("sessions", [])))
+        except Exception as e:
+            print(f"[!] Federation: {remote['name']} unreachable: {e}")
+            results.append((remote, None))
+    return results
+
+
 # ── Transcript parsing ──
 
 def update_session_state(sid):
@@ -493,7 +521,27 @@ class WebUIHandler(BaseHTTPRequestHandler):
                         if pr:
                             entry["pending_request"] = pr
                     result.append(entry)
-            self._respond_json({"sessions": result})
+
+            # Federation: tag local sessions and merge remote sessions
+            for entry in result:
+                entry["machine"] = local_name
+                session_machine_map[entry["session_id"]] = None
+
+            if remote_servers:
+                remote_results = fetch_remote_sessions()
+                for remote, remote_sessions in remote_results:
+                    if remote_sessions is None:
+                        continue
+                    for rs in remote_sessions:
+                        rs["machine"] = remote["name"]
+                        original_sid = rs["session_id"]
+                        rs["session_id"] = remote["name"] + ":" + str(original_sid)
+                        rs["_remote_session_id"] = original_sid
+                        session_machine_map[rs["session_id"]] = remote["url"]
+                        result.append(rs)
+
+            remote_names = [r["name"] for r in remote_servers]
+            self._respond_json({"sessions": result, "local_name": local_name, "remote_names": remote_names})
 
         elif path.startswith("/api/session/") and path.endswith("/transcript"):
             # /api/session/<id>/transcript?limit=50&after=0
