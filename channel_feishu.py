@@ -23,6 +23,8 @@ import urllib.request
 QUEUE_DIR = "/tmp/claude-webui"
 _SERVER_BASE = "http://127.0.0.1:19836"
 _SAFE_ID_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+_THREADS_FILE = os.path.join(_DATA_DIR, "feishu_threads.json")
 
 # Max transcript messages to send per session per scan (avoid Feishu rate limit)
 _MAX_MESSAGES_PER_SCAN = 5
@@ -92,6 +94,42 @@ _session_threads = {}
 _notified_requests = set()  # permission request IDs already sent
 _request_card_ids = {}      # request_id -> feishu message_id (for card updates)
 _lock = threading.Lock()
+
+
+def _load_threads():
+    """Load persisted session threads from disk."""
+    global _session_threads
+    if not os.path.exists(_THREADS_FILE):
+        return
+    try:
+        with open(_THREADS_FILE) as f:
+            data = json.load(f)
+        for sid, t in data.items():
+            t["pending_request_ids"] = set(t.get("pending_request_ids", []))
+        _session_threads = data
+        print(f"[feishu] Restored {len(data)} session thread(s) from disk")
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"[feishu] Failed to load threads: {e}")
+
+
+def _save_threads():
+    """Persist session threads to disk. Must be called with _lock held."""
+    try:
+        os.makedirs(_DATA_DIR, exist_ok=True)
+        serializable = {}
+        for sid, t in _session_threads.items():
+            serializable[sid] = {
+                "root_message_id": t["root_message_id"],
+                "sent_index": t["sent_index"],
+                "last_state": t["last_state"],
+                "pending_request_ids": list(t.get("pending_request_ids", set())),
+            }
+        tmp = _THREADS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(serializable, f, indent=2)
+        os.replace(tmp, _THREADS_FILE)
+    except (IOError, OSError) as e:
+        print(f"[feishu] Failed to save threads: {e}")
 
 # ── Config ──
 
@@ -880,9 +918,14 @@ def _scan_once():
             }
             with _lock:
                 _session_threads[sid] = thread
+                _save_threads()
 
         # Sync transcript entries
+        sent_before = thread["sent_index"]
         _sync_transcript(sid, thread)
+        if thread["sent_index"] != sent_before:
+            with _lock:
+                _save_threads()
 
         # Detect state changes
         prev_state = thread["last_state"]
@@ -956,6 +999,7 @@ def _scan_once():
     for sid in ended_sids:
         with _lock:
             thread = _session_threads.pop(sid, None)
+            _save_threads()
         if thread:
             _reply_post(thread["root_message_id"], "🏁 Session ended.")
             print(f"[feishu] Session {sid} ended, topic preserved")
@@ -1038,6 +1082,8 @@ def start_feishu_channel():
     except ImportError:
         print("[feishu] lark-oapi not installed (pip install lark-oapi), skipping")
         return
+
+    _load_threads()
 
     saved_open_id = cfg.get("open_id")
     if saved_open_id:
