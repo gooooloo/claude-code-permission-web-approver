@@ -385,14 +385,6 @@ def _build_session_root_card(session, subject=None, created_at=None):
     elements = [
         {
             "tag": "markdown",
-            "content": f"**Project:** {project_name}"
-        },
-        {
-            "tag": "markdown",
-            "content": f"**Session:** {short_id}"
-        },
-        {
-            "tag": "markdown",
             "content": f"**Directory:** {project_dir}"
         },
         {
