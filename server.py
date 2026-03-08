@@ -16,6 +16,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import time
 import threading
 import urllib.request
@@ -25,6 +26,7 @@ import uuid
 import cgi
 
 from frontend import HTML_PAGE
+from platform_utils import IS_WINDOWS, get_queue_dir, get_image_dir, is_process_alive, find_claude_pid, get_process_children, get_process_name, encode_project_path
 
 try:
     from channel_feishu import start_feishu_channel
@@ -32,8 +34,14 @@ try:
 except ImportError:
     _has_feishu = False
 
-QUEUE_DIR = "/tmp/claude-webui"
-IMAGE_DIR = "/tmp/claude-images"
+try:
+    from channel_teams import start_teams_channel
+    _has_teams = True
+except ImportError:
+    _has_teams = False
+
+QUEUE_DIR = get_queue_dir()
+IMAGE_DIR = get_image_dir()
 PORT = 19836
 # ── Session registry ──
 sessions = {}
@@ -391,11 +399,23 @@ def _is_session_alive(sid, session_data):
     # For numeric session IDs (PIDs), check if the process is alive
     try:
         pid = int(sid)
-        os.kill(pid, 0)
-        return True
+        return is_process_alive(pid)
     except ValueError:
         pass  # Non-numeric (UUID) session ID
-    except (OSError, ProcessLookupError):
+
+    # On Windows, check console_pid if available
+    if IS_WINDOWS:
+        console_pid = session_data.get("console_pid")
+        if console_pid:
+            try:
+                return is_process_alive(int(console_pid))
+            except (ValueError, TypeError):
+                pass
+        # No console_pid yet — session may still be registering; keep alive
+        # for a grace period (60 seconds from registration)
+        registered_at = session_data.get("registered_at", 0)
+        if time.time() - registered_at < 60:
+            return True
         return False
 
     # For UUID session IDs, check if the tmux pane exists and has claude in its process tree
@@ -459,7 +479,20 @@ def zombie_cleanup_loop():
             print(f"[~] Cleaned up {len(dead)} zombie session(s): {dead}")
 
 
-# ── Tmux interaction ──
+# ── Prompt delivery ──
+
+def win_send_prompt(console_pid, text):
+    """Send a prompt to a Windows console via win_send_keys.py."""
+    try:
+        result = subprocess.run(
+            [sys.executable, os.path.join(os.path.dirname(__file__), "win_send_keys.py"),
+             str(console_pid), text],
+            capture_output=True, timeout=10
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
 
 def tmux_send_prompt(session, prompt):
     """Send a prompt to a tmux pane."""
@@ -492,6 +525,17 @@ def tmux_send_prompt(session, prompt):
         return True
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
+
+
+def send_prompt(session_info, prompt_text):
+    """Send a prompt to a session, dispatching to the appropriate platform method."""
+    if IS_WINDOWS:
+        console_pid = session_info.get("console_pid")
+        if console_pid:
+            return win_send_prompt(console_pid, prompt_text)
+        return False
+    # Linux/macOS: use tmux
+    return tmux_send_prompt(session_info, prompt_text)
 
 
 
@@ -606,8 +650,10 @@ class WebUIHandler(BaseHTTPRequestHandler):
                     pid = data.get("pid")
                     if pid:
                         try:
-                            os.kill(int(pid), 0)
-                        except (OSError, ProcessLookupError, ValueError):
+                            if not is_process_alive(int(pid)):
+                                os.remove(fpath)
+                                continue
+                        except (ValueError, TypeError):
                             os.remove(fpath)
                             continue
                     requests.append(data)
@@ -681,6 +727,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
             transcript_path = body.get("transcript_path", "")
             tmux_pane = body.get("tmux_pane", "")
             tmux_socket = body.get("tmux_socket", "")
+            console_pid = body.get("console_pid", "")
             cwd = body.get("cwd", "")
 
             with sessions_lock:
@@ -695,11 +742,23 @@ class WebUIHandler(BaseHTTPRequestHandler):
                     if evict:
                         print(f"[~] Evicted session(s) on pane {tmux_pane}: {evict}")
 
+                # Evict other sessions on the same Windows console_pid
+                if console_pid:
+                    evict = [k for k, v in sessions.items() if k != sid and v.get("console_pid") == console_pid]
+                    for k in evict:
+                        del sessions[k]
+                        keys_to_remove = [ak for ak in session_auto_allow if ak[0] == k]
+                        for ak in keys_to_remove:
+                            del session_auto_allow[ak]
+                    if evict:
+                        print(f"[~] Evicted session(s) on console_pid {console_pid}: {evict}")
+
                 if source == "startup" or sid not in sessions:
                     sessions[sid] = {
                         "transcript_path": transcript_path,
                         "tmux_pane": tmux_pane,
                         "tmux_socket": tmux_socket,
+                        "console_pid": console_pid,
                         "cwd": cwd,
                         "registered_at": time.time(),
                         "transcript_offset": 0,
@@ -720,6 +779,8 @@ class WebUIHandler(BaseHTTPRequestHandler):
                         s["tmux_pane"] = tmux_pane
                     if tmux_socket:
                         s["tmux_socket"] = tmux_socket
+                    if console_pid:
+                        s["console_pid"] = console_pid
                     if cwd:
                         s["cwd"] = cwd
 
@@ -743,7 +804,8 @@ class WebUIHandler(BaseHTTPRequestHandler):
                         except (json.JSONDecodeError, IOError):
                             continue
 
-            print(f"[*] Session registered: {sid} source={source} pane={tmux_pane}")
+            pane_info = f"pane={tmux_pane}" if tmux_pane else f"console_pid={console_pid}" if console_pid else "no-pane"
+            print(f"[*] Session registered: {sid} source={source} {pane_info}")
             self._respond_json({"ok": True})
 
         elif path == "/api/session/deregister":
@@ -899,11 +961,11 @@ class WebUIHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Session not found")
                 return
 
-            if tmux_send_prompt(s, prompt):
-                print(f"[>] Prompt sent via tmux to session {sid}: {prompt[:80]}")
+            if send_prompt(s, prompt):
+                print(f"[>] Prompt sent to session {sid}: {prompt[:80]}")
                 self._respond_json({"ok": True})
             else:
-                self.send_error(500, "Failed to send prompt via tmux")
+                self.send_error(500, "Failed to send prompt")
 
         elif path == "/api/upload-image":
             os.makedirs(IMAGE_DIR, exist_ok=True)
@@ -1000,6 +1062,10 @@ class WebUIHandler(BaseHTTPRequestHandler):
 
 def scan_existing_sessions():
     """Scan tmux panes for running claude processes and register them."""
+    if IS_WINDOWS:
+        # Tmux is not available on Windows; sessions will register via hooks
+        return
+
     # Find all tmux sockets
     import pathlib
     tmux_sockets = []
@@ -1157,6 +1223,12 @@ def main():
             start_feishu_channel()
         except Exception as e:
             print(f"[feishu] Failed to start: {e}")
+
+    if _has_teams:
+        try:
+            start_teams_channel()
+        except Exception as e:
+            print(f"[teams] Failed to start: {e}")
 
     server = HTTPServer(("0.0.0.0", PORT), WebUIHandler)
     print(f"Claude Code WebUI Server running on http://localhost:{PORT}")
