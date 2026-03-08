@@ -641,18 +641,11 @@ def _sync_transcript(sid, thread):
 
     count = 0
     for entry in new_entries:
-        if count >= _MAX_MESSAGES_PER_SCAN:
-            break
-
         messages = _format_transcript_entry(entry)
         for text, _ in messages:
-            if not text:
-                continue
-            _reply_post(root_mid, text)
-            count += 1
-            if count >= _MAX_MESSAGES_PER_SCAN:
-                break
-            time.sleep(_MESSAGE_DELAY)
+            if text:
+                _reply_post(root_mid, text)
+                count += 1
 
         thread["sent_index"] += 1
 
