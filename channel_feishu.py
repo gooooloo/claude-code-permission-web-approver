@@ -992,7 +992,7 @@ def _scan_once():
             label = _STATE_LABELS.get(state, state)
 
             if state == "idle":
-                _reply_post(root_mid, f"⏸ {label}\n\nReply in this topic to send a prompt.")
+                _reply_post(root_mid, f"⏸ {label}")
             elif state == "busy" and prev_state == "idle":
                 _reply_post(root_mid, f"▶ {label}")
 
