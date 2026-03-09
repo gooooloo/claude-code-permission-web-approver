@@ -63,6 +63,139 @@ sessions_lock = threading.Lock()
 # Session-level auto-allow rules: { (session_id, tool_name): True }
 session_auto_allow = {}
 
+# ── Smart auto-approve ──
+smart_auto_approve = True  # enabled by default
+
+# Read-only command whitelist for Bash tool
+# Each entry is a base command name; subcommands checked separately for git etc.
+READONLY_COMMANDS = {
+    # File viewing
+    "cat", "head", "tail", "less", "more", "wc", "file", "stat", "du", "df",
+    # Directory listing
+    "ls", "tree", "find", "realpath", "dirname", "basename",
+    # Search
+    "grep", "rg", "ag", "fgrep", "egrep",
+    # Version/info
+    "echo", "printf", "date", "whoami", "hostname", "uname", "env", "printenv",
+    "which", "type", "command", "true", "false", "test",
+    # Package info (read-only)
+    "npm", "pip", "pip3", "cargo", "go", "python", "python3", "node", "ruby", "java", "javac",
+}
+
+# Git subcommands that are read-only
+READONLY_GIT_SUBCOMMANDS = {
+    "log", "diff", "status", "show", "branch", "tag", "remote", "stash",
+    "blame", "shortlog", "describe", "rev-parse", "rev-list", "ls-files",
+    "ls-tree", "cat-file", "config",
+}
+
+# Commands that are never safe
+DANGEROUS_COMMANDS = {
+    "rm", "rmdir", "mv", "chmod", "chown", "chgrp", "mkfs", "dd",
+    "shutdown", "reboot", "kill", "killall", "pkill",
+    "curl", "wget",  # network access
+    "ssh", "scp", "rsync",  # remote access
+    "sudo", "su", "doas",  # privilege escalation
+}
+
+# Tools that are inherently read-only
+READONLY_TOOLS = {"Read", "Glob", "Grep", "mcp__acp__Read", "mcp__acp__Glob", "mcp__acp__Grep"}
+
+
+def _is_readonly_bash(command):
+    """Check if a Bash command (possibly compound) is read-only."""
+    # Split on pipes, &&, ||, and ;
+    parts = re.split(r'\||\&\&|\|\||;', command)
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        first_line = part.split("\n")[0].strip()
+        tokens = first_line.split()
+        if not tokens:
+            continue
+        base = os.path.basename(tokens[0])
+        if not base:
+            continue
+
+        # Dangerous commands — immediate reject
+        if base in DANGEROUS_COMMANDS:
+            return False
+
+        # sed with -i flag is not read-only
+        if base == "sed":
+            if "-i" in tokens or any(t.startswith("-i") for t in tokens[1:]):
+                return False
+            continue
+
+        # awk — generally read-only unless redirecting (handled by shell, not here)
+        if base in ("awk", "gawk", "mawk", "nawk"):
+            continue
+
+        # git — check subcommand
+        if base == "git":
+            sub = ""
+            for t in tokens[1:]:
+                if not t.startswith("-"):
+                    sub = t
+                    break
+            if sub not in READONLY_GIT_SUBCOMMANDS:
+                return False
+            continue
+
+        # Known read-only commands
+        if base in READONLY_COMMANDS:
+            continue
+
+        # Unknown command — not safe
+        return False
+
+    return True
+
+
+def _is_project_file(file_path, session_cwd):
+    """Check if a file path is within the session's project directory."""
+    if not file_path or not session_cwd:
+        return False
+    try:
+        real_file = os.path.realpath(file_path)
+        real_cwd = os.path.realpath(session_cwd)
+        return real_file.startswith(real_cwd + os.sep) or real_file == real_cwd
+    except (ValueError, OSError):
+        return False
+
+
+def check_smart_auto_approve(data):
+    """Check if a permission request should be auto-approved by smart rules.
+    Returns True if the request is safe to auto-approve."""
+    if not smart_auto_approve:
+        return False
+
+    tname = data.get("tool_name", "")
+    tool_input = data.get("tool_input", {})
+    sid = str(data.get("session_id", ""))
+
+    # Rule 1: Inherently read-only tools
+    if tname in READONLY_TOOLS:
+        return True
+
+    # Rule 2: Read-only Bash commands
+    if tname in ("Bash", "mcp__acp__Bash"):
+        command = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
+        if command and _is_readonly_bash(command):
+            return True
+
+    # Rule 3: Project-internal file edits
+    if tname in ("Write", "Edit", "mcp__acp__Write", "mcp__acp__Edit"):
+        file_path = tool_input.get("file_path", "") if isinstance(tool_input, dict) else ""
+        with sessions_lock:
+            session = sessions.get(sid)
+            session_cwd = session.get("cwd", "") if session else ""
+        if _is_project_file(file_path, session_cwd):
+            return True
+
+    return False
+
 # ── Federation ──
 remote_servers = []          # [{"name": str, "url": str}]
 local_name = "local"
@@ -363,7 +496,7 @@ def _cleanup_stale_request(request_id):
 # ── Auto-allow ──
 
 def check_auto_allow():
-    """Scan pending requests and auto-approve those matching session auto-allow rules."""
+    """Scan pending requests and auto-approve those matching session auto-allow or smart rules."""
     for path in glob.glob(os.path.join(QUEUE_DIR, "*.request.json")):
         resp_path = path.replace(".request.json", ".response.json")
         if os.path.exists(resp_path):
@@ -375,11 +508,19 @@ def check_auto_allow():
             continue
         sid = str(data.get("session_id", ""))
         tname = data.get("tool_name", "")
+        approved = False
+        reason = ""
         if (sid, tname) in session_auto_allow:
+            approved = True
+            reason = "session-rule"
+        elif check_smart_auto_approve(data):
+            approved = True
+            reason = "smart-rule"
+        if approved:
             try:
                 with open(resp_path, "w") as f:
                     json.dump({"decision": "allow"}, f)
-                print(f"[~] Auto-allowed {tname} for session {sid}")
+                print(f"[~] Auto-allowed {tname} for session {sid} ({reason})")
             except IOError:
                 pass
 
@@ -387,8 +528,7 @@ def check_auto_allow():
 def auto_allow_loop():
     """Background thread: periodically check for auto-allowable requests."""
     while True:
-        if session_auto_allow:
-            check_auto_allow()
+        check_auto_allow()
         time.sleep(0.5)
 
 
