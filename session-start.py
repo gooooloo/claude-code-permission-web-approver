@@ -62,7 +62,7 @@ def main():
 
     if IS_WINDOWS:
         # On Windows there's no tmux; pass the console host PID instead
-        body_dict["console_pid"] = os.getppid()
+        body_dict["console_pid"] = find_claude_pid()
     else:
         body_dict["tmux_pane"] = os.environ.get("TMUX_PANE", "")
         body_dict["tmux_socket"] = os.environ.get("TMUX", "")
