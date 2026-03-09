@@ -34,11 +34,6 @@ try:
 except ImportError:
     _has_feishu = False
 
-try:
-    from channel_teams import start_teams_channel
-    _has_teams = True
-except ImportError:
-    _has_teams = False
 
 QUEUE_DIR = get_queue_dir()
 IMAGE_DIR = get_image_dir()
@@ -1459,11 +1454,6 @@ def main():
         except Exception as e:
             print(f"[feishu] Failed to start: {e}")
 
-    if _has_teams:
-        try:
-            start_teams_channel()
-        except Exception as e:
-            print(f"[teams] Failed to start: {e}")
 
     # Machines hub registration heartbeat
     if args.hub_tunnel_id:
