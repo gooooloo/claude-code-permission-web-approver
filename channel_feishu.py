@@ -19,6 +19,7 @@ import re
 import threading
 import time
 import urllib.request
+import uuid
 
 QUEUE_DIR = "/tmp/claude-webui"
 _SERVER_BASE = "http://127.0.0.1:19836"
@@ -93,6 +94,7 @@ _session_threads = {}
 
 _notified_requests = set()  # permission request IDs already sent
 _request_card_ids = {}      # request_id -> feishu message_id (for card updates)
+_pending_prompts = {}       # prompt_id -> prompt text (for session picker cards)
 _lock = threading.Lock()
 
 
@@ -910,10 +912,74 @@ def _handle_message(data):
                 _reply_text(message_id, "Failed to send prompt.")
         return
 
-    # Message not in any session topic — tell user to reply in a topic
-    print(f"[feishu] Ignored message not in any session topic: {text[:80]}")
+    # Message not in any session topic — show session picker
+    print(f"[feishu] Message not in any session topic: {text[:80]}")
     if message_id:
-        _reply_text(message_id, "Please reply within a session topic to send a prompt.")
+        _show_session_picker(message_id, text)
+
+
+def _show_session_picker(message_id, prompt_text):
+    """Show an interactive card letting the user pick which session to send the prompt to."""
+    sessions_data = _server_get("/api/sessions?local_only=1")
+    sessions = (sessions_data or {}).get("sessions", [])
+
+    if not sessions:
+        _reply_text(message_id, "No active sessions. Please start a Claude Code session first.")
+        return
+
+    # Store the prompt text for later retrieval when the user clicks a button
+    prompt_id = str(uuid.uuid4())[:8]
+    with _lock:
+        _pending_prompts[prompt_id] = prompt_text
+        # Evict old entries to avoid unbounded growth (keep last 50)
+        if len(_pending_prompts) > 50:
+            oldest_keys = list(_pending_prompts.keys())[:-50]
+            for k in oldest_keys:
+                _pending_prompts.pop(k, None)
+
+    elements = [
+        {
+            "tag": "markdown",
+            "content": f"**Your message:**\n{_truncate(prompt_text, 200)}"
+        },
+        {"tag": "hr"},
+        {
+            "tag": "markdown",
+            "content": "Please select a session to send this prompt to:"
+        },
+    ]
+
+    buttons = []
+    for s in sessions:
+        sid = s.get("session_id", "")
+        state = s.get("state", "unknown")
+        cwd = s.get("cwd", "")
+        project_name = os.path.basename(cwd) if cwd else "?"
+        short_id = sid[:8] if sid else "?"
+        label = f"{project_name} ({short_id}) [{state}]"
+        buttons.append({
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": label},
+            "type": "primary" if state in ("idle", "elicitation") else "default",
+            "value": {
+                "type": "send_prompt",
+                "prompt_id": prompt_id,
+                "session_id": sid,
+            }
+        })
+
+    elements.append({"tag": "action", "actions": buttons})
+
+    card = {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": "Select Session"},
+            "template": "blue"
+        },
+        "elements": elements
+    }
+
+    _reply_card(message_id, card)
 
 
 def _handle_card_action(data):
@@ -935,6 +1001,9 @@ def _handle_card_action(data):
     decision = value.get("decision", "")
     action_type = value.get("type", "")
 
+    if action_type == "send_prompt":
+        return _handle_send_prompt_action(value)
+
     if not request_id or not decision:
         return P2CardActionTriggerResponse({"toast": {"type": "error", "content": "Missing data"}})
 
@@ -945,6 +1014,33 @@ def _handle_card_action(data):
         return _handle_permission_action(request_id, decision, value)
 
     return P2CardActionTriggerResponse({"toast": {"type": "info", "content": "Unknown action type"}})
+
+
+def _handle_send_prompt_action(value):
+    """Process a session picker button click — send the stored prompt to the chosen session."""
+    from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse
+
+    prompt_id = value.get("prompt_id", "")
+    session_id = value.get("session_id", "")
+
+    if not prompt_id or not session_id:
+        return P2CardActionTriggerResponse({"toast": {"type": "error", "content": "Missing data"}})
+
+    with _lock:
+        prompt_text = _pending_prompts.pop(prompt_id, None)
+
+    if not prompt_text:
+        return P2CardActionTriggerResponse({"toast": {"type": "warning", "content": "Prompt expired or already sent"}})
+
+    if _server_post("/api/send-prompt", {"session_id": session_id, "prompt": prompt_text}):
+        short_id = session_id[:8]
+        print(f"[feishu] Prompt sent to session {session_id} via picker: {prompt_text[:80]}")
+        return P2CardActionTriggerResponse({"toast": {"type": "success", "content": f"Sent to {short_id}"}})
+    else:
+        # Put the prompt back so user can retry
+        with _lock:
+            _pending_prompts[prompt_id] = prompt_text
+        return P2CardActionTriggerResponse({"toast": {"type": "error", "content": "Failed to send prompt"}})
 
 
 def _handle_permission_action(request_id, decision, value):
