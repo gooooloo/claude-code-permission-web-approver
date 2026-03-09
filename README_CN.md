@@ -195,7 +195,6 @@ devtunnel host --tunnel-id my-machine
 | `--hub-tunnel-id <id>` | Hub 的 DevTunnels ID（简写） |
 | `--tunnel-id <id>` | 本机的 DevTunnels ID |
 | `--detect-tunnel` | 通过 `devtunnel list` 自动检测本机 devtunnel ID |
-| `--self-url <url>` | 本机的公网 URL（优先级高于 tunnel ID） |
 | `--name <name>` | 本机的显示名称（默认：`local`） |
 
 ## 安全提示

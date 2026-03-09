@@ -1416,7 +1416,6 @@ def main():
     parser.add_argument("--hub-tunnel-id", help="DevTunnels ID of the hub (e.g. abc123), expands to https://abc123-19836.asse.devtunnels.ms")
     parser.add_argument("--tunnel-id", help="DevTunnels ID for this machine (e.g. 1c6j6jlh), used to derive public URL")
     parser.add_argument("--detect-tunnel", action="store_true", help="Auto-detect devtunnel ID by running 'devtunnel list'")
-    parser.add_argument("--self-url", help="This machine's public URL to report to hub (overrides --tunnel-id and --detect-tunnel)")
     args = parser.parse_args()
 
     global local_name, remote_servers
@@ -1467,14 +1466,14 @@ def main():
     if hub_arg:
         hub_url = hub_arg.rstrip("/")
         # Determine this machine's public URL
-        self_url = args.self_url
         tunnel_id = args.tunnel_id
-        if not self_url and not tunnel_id and args.detect_tunnel:
+        if not tunnel_id and args.detect_tunnel:
             tunnel_id = detect_devtunnel_id()
-        if not self_url and tunnel_id:
+        if tunnel_id:
             self_url = f"https://{tunnel_id}-{PORT}.asse.devtunnels.ms"
-        if not self_url:
-            print("[!] MultiView: --hub requires --tunnel-id, --detect-tunnel, or --self-url")
+        else:
+            print("[!] MultiView: --hub requires --tunnel-id or --detect-tunnel")
+            sys.exit(1)
             sys.exit(1)
         def hub_heartbeat():
             while True:

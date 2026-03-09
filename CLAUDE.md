@@ -164,7 +164,6 @@ MultiView (`/multiview`) provides a centralized page to access the same WebUI se
 | `--hub-tunnel-id` | DevTunnels ID of the hub (shorthand, expands to `https://<id>-19836.asse.devtunnels.ms`) |
 | `--tunnel-id` | DevTunnels ID for this machine |
 | `--detect-tunnel` | Auto-detect this machine's devtunnel ID via `devtunnel list` |
-| `--self-url` | This machine's public URL (overrides `--tunnel-id` and `--detect-tunnel`) |
 
 **How it works:**
 - Remote servers with `--hub` send a heartbeat (`POST /api/multiview/register`) every 30 seconds with their name and public URL
