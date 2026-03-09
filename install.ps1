@@ -154,6 +154,8 @@ if ($DoGlobal) {
 }
 
 if ($DoProject) {
+    # Hook files are always needed — hook commands reference %USERPROFILE%\.claude\hooks\
+    Install-HookFiles
     Install-Settings (Join-Path $ProjectDir ".claude\settings.json")
     Write-Host "WebUI hooks installed for: $ProjectDir"
 }

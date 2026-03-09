@@ -130,6 +130,8 @@ if [ "$DO_GLOBAL" = true ]; then
 fi
 
 if [ "$DO_PROJECT" = true ]; then
+  # Symlinks are always needed — hook commands reference $HOME/.claude/hooks/
+  install_symlinks
   install_settings "$PROJECT_DIR/.claude/settings.json"
   echo "WebUI hooks installed for: $PROJECT_DIR"
 fi
