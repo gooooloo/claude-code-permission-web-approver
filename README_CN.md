@@ -109,23 +109,6 @@ Claude Code (tmux 内)                Web 浏览器
 
 6. 在 **tmux 内** 运行 Claude Code — dashboard 会自动显示你的会话。
 
-## 从旧架构升级
-
-如果之前安装过旧版（6 个 bash hook）：
-
-```bash
-# 卸载旧 hook
-/path/to/claude-code-webui/uninstall.sh --all
-
-# 拉取最新代码
-cd /path/to/claude-code-webui && git pull
-
-# 安装新 hook
-/path/to/claude-code-webui/install.sh --all
-```
-
-新的安装脚本会自动清理旧的 `.sh` symlink。
-
 ## MultiView（多机监控）
 
 MultiView 让你在一个页面上访问多台机器上运行的同一个 WebUI 服务。远程服务器向中心 hub 自动注册，MultiView 页面自动发现所有机器并提供快捷打开链接。

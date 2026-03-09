@@ -109,23 +109,6 @@ Claude Code (in tmux)                Web browser
 
 6. Run Claude Code **inside tmux** — the dashboard will show your sessions and let you interact.
 
-## Upgrading from the old architecture
-
-If you had the previous version installed (6 bash hooks):
-
-```bash
-# Uninstall old hooks
-/path/to/claude-code-webui/uninstall.sh --all
-
-# Pull latest
-cd /path/to/claude-code-webui && git pull
-
-# Install new hooks
-/path/to/claude-code-webui/install.sh --all
-```
-
-The new install script automatically cleans up old `.sh` symlinks.
-
 ## MultiView (multi-machine monitoring)
 
 MultiView lets you monitor the same WebUI service running on multiple machines from a single page. Remote servers self-register with a central hub; the MultiView page auto-discovers all machines and provides quick-open links.
