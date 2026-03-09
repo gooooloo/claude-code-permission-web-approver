@@ -17,7 +17,7 @@
 Claude Code                          Web 浏览器
       |                                   |
       |-- PermissionRequest hook ------>  |
-      |   (permission-request.py)         |
+      |   (hook-permission-request.py)         |
       |   写入 .request.json 到           |
       |   /tmp/claude-webui/              |
       |                                   |
@@ -49,9 +49,9 @@ Claude Code                          Web 浏览器
 ### 组件
 
 1. **`server.py`** — Python HTTP 服务器（端口 19836）。会话注册、transcript 解析、多会话 dashboard。
-2. **`permission-request.py`** — `PermissionRequest` hook。自动放行检查，写入 `.request.json`，轮询 `.response.json`。
-3. **`session-start.py`** — `SessionStart` hook。向服务器注册会话（transcript 路径、tmux/console 信息、cwd）。
-4. **`session-end.py`** — `SessionEnd` hook。注销会话，清理文件。
+2. **`hook-permission-request.py`** — `PermissionRequest` hook。自动放行检查，写入 `.request.json`，轮询 `.response.json`。
+3. **`hook-session-start.py`** — `SessionStart` hook。向服务器注册会话（transcript 路径、tmux/console 信息、cwd）。
+4. **`hook-session-end.py`** — `SessionEnd` hook。注销会话，清理文件。
 5. **`platform_utils.py`** — 跨平台工具。OS 检测、临时目录路径、进程树遍历。
 6. **`win_send_keys.py`** — Windows console 输入辅助。通过 `WriteConsoleInputW` 注入键盘输入。
 7. **`channel_feishu.py`** — 可选的飞书通知渠道。

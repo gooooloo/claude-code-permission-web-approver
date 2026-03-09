@@ -19,9 +19,9 @@ A web UI for Claude Code that replaces default terminal prompts with a browser-b
 
 - **server.py** — Python HTTP server (port 19836). Session registry, transcript incremental parser, multi-session dashboard UI, API endpoints. Background threads for auto-allow and zombie session cleanup.
 - **frontend.py** — Extracted HTML/CSS/JS for the dashboard UI. Imported by server.py.
-- **permission-request.py** — `PermissionRequest` hook. Parses tool calls, checks `settings.local.json` for pre-approved glob patterns, falls back to auto-allow if server is offline, otherwise queues a request JSON and polls for response.
-- **session-start.py** — `SessionStart` hook. Discovers transcript path, POSTs to `/api/session/register` with tmux pane/socket (Linux) or console_pid (Windows), cwd, and source.
-- **session-end.py** — `SessionEnd` hook. POSTs to `/api/session/deregister`, local fallback cleanup of request files.
+- **hook-permission-request.py** — `PermissionRequest` hook. Parses tool calls, checks `settings.local.json` for pre-approved glob patterns, falls back to auto-allow if server is offline, otherwise queues a request JSON and polls for response.
+- **hook-session-start.py** — `SessionStart` hook. Discovers transcript path, POSTs to `/api/session/register` with tmux pane/socket (Linux) or console_pid (Windows), cwd, and source.
+- **hook-session-end.py** — `SessionEnd` hook. POSTs to `/api/session/deregister`, local fallback cleanup of request files.
 - **platform_utils.py** — Cross-platform utilities. OS detection, temp directory paths, process tree walking (via `/proc` on Linux, `CreateToolhelp32Snapshot` on Windows), path encoding.
 - **win_send_keys.py** — Windows console input helper. Attaches to a target process's console via `AttachConsole` and injects keyboard input via `WriteConsoleInputW`. Runs as a subprocess to avoid disrupting the server's console.
 - **channel_feishu.py** — Optional Feishu notification channel. Polls `/api/sessions` for state changes, sends permission cards and idle cards. Prompt delivery via `/api/send-prompt`. Also manages Feishu topic naming (first user prompt), message routing by thread_id, and session pinning/unpinning.
@@ -94,7 +94,7 @@ Patterns in `settings.local.json` use `ToolName(pattern)` format with glob match
 
 ### Session Management
 - Session ID = PPID (Claude Code's process ID)
-- Sessions are registered via `/api/session/register` (from session-start.py hook)
+- Sessions are registered via `/api/session/register` (from hook-session-start.py hook)
 - Session state is derived from transcript JSONL (not stored as a state machine)
 - Session-level auto-allow rules are stored in-memory on the server as `{(session_id, tool_name): True}`
 - Zombie sessions (dead PIDs) are cleaned up every 30 seconds

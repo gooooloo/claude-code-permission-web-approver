@@ -56,7 +56,7 @@ function Remove-HookFiles {
     $removed = 0
 
     # Remove .py hook files
-    $pyScripts = @("permission-request.py", "session-start.py", "session-end.py", "platform_utils.py")
+    $pyScripts = @("hook-permission-request.py", "hook-session-start.py", "hook-session-end.py", "platform_utils.py")
     foreach ($script in $pyScripts) {
         $path = Join-Path $HooksDir $script
         if (Test-Path $path) {

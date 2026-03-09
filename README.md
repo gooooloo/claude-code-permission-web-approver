@@ -17,7 +17,7 @@ A web UI for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that 
 Claude Code                          Web browser
       |                                   |
       |-- PermissionRequest hook ------>  |
-      |   (permission-request.py)         |
+      |   (hook-permission-request.py)         |
       |   writes .request.json to         |
       |   /tmp/claude-webui/              |
       |                                   |
@@ -49,9 +49,9 @@ Claude Code                          Web browser
 ### Components
 
 1. **`server.py`** — Python HTTP server (port 19836). Session registry, transcript parser, multi-session dashboard.
-2. **`permission-request.py`** — `PermissionRequest` hook. Auto-allow check, writes `.request.json`, polls for `.response.json`.
-3. **`session-start.py`** — `SessionStart` hook. Registers session with server (transcript path, tmux/console info, cwd).
-4. **`session-end.py`** — `SessionEnd` hook. Deregisters session, cleans up files.
+2. **`hook-permission-request.py`** — `PermissionRequest` hook. Auto-allow check, writes `.request.json`, polls for `.response.json`.
+3. **`hook-session-start.py`** — `SessionStart` hook. Registers session with server (transcript path, tmux/console info, cwd).
+4. **`hook-session-end.py`** — `SessionEnd` hook. Deregisters session, cleans up files.
 5. **`platform_utils.py`** — Cross-platform utilities. OS detection, temp directory paths, process tree walking.
 6. **`win_send_keys.py`** — Windows console input helper. Injects keyboard input via `WriteConsoleInputW`.
 7. **`channel_feishu.py`** — Optional Feishu (Lark) notification channel.

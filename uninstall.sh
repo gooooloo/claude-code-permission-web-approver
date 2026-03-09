@@ -85,7 +85,7 @@ remove_hooks_from_settings() {
 remove_symlinks() {
   local removed=0
   # Remove new .py symlinks
-  for script in permission-request.py session-start.py session-end.py; do
+  for script in hook-permission-request.py hook-session-start.py hook-session-end.py; do
     if [ -L "$HOOKS_DIR/$script" ]; then
       rm -f "$HOOKS_DIR/$script"
       removed=$((removed + 1))

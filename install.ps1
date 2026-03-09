@@ -62,7 +62,7 @@ $HooksConfig = @{
             hooks = @(
                 @{
                     type = "command"
-                    command = "python `"$HooksPath\permission-request.py`""
+                    command = "python `"$HooksPath\hook-permission-request.py`""
                     timeout = 86400
                 }
             )
@@ -74,7 +74,7 @@ $HooksConfig = @{
             hooks = @(
                 @{
                     type = "command"
-                    command = "python `"$HooksPath\session-start.py`""
+                    command = "python `"$HooksPath\hook-session-start.py`""
                     timeout = 5
                 }
             )
@@ -86,7 +86,7 @@ $HooksConfig = @{
             hooks = @(
                 @{
                     type = "command"
-                    command = "python `"$HooksPath\session-end.py`""
+                    command = "python `"$HooksPath\hook-session-end.py`""
                     timeout = 5
                 }
             )
@@ -112,7 +112,7 @@ function Install-HookFiles {
     }
 
     # Copy hook scripts (copy instead of symlink — Windows symlinks require admin/developer mode)
-    $scripts = @("permission-request.py", "session-start.py", "session-end.py", "platform_utils.py")
+    $scripts = @("hook-permission-request.py", "hook-session-start.py", "hook-session-end.py", "platform_utils.py")
     foreach ($script in $scripts) {
         $src = Join-Path $ScriptDir $script
         $dst = Join-Path $HooksDir $script
