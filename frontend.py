@@ -653,6 +653,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <div class="header">
   <button class="back-btn" id="backBtn" onclick="showDashboard()">Back</button>
   <h1 id="pageTitle" ondblclick="window.scrollTo({top:0,behavior:'smooth'})">Claude Sessions</h1>
+  <a href="/multiview" class="btn-scroll-bottom" style="display:flex;text-decoration:none">MultiView</a>
   <button class="btn-scroll-bottom" id="collapseAllBtn" onclick="collapseAll()" style="display:flex">Collapse All</button>
   <button class="btn-scroll-bottom" id="scrollBottomBtn" onclick="window.scrollTo({top:document.documentElement.scrollHeight,behavior:'smooth'})">Bottom</button>
 </div>
@@ -857,6 +858,7 @@ async function fetchSessions() {
     const data = await res.json();
     federationLocalName = data.local_name || 'local';
     federationRemoteNames = data.remote_names || [];
+    document.title = federationLocalName + ' — Claude Sessions';
     renderDashboard(data.sessions || []);
   } catch (e) {
     // connection error, silently retry on next poll
@@ -914,13 +916,14 @@ function renderDashboard(sessions) {
       el.innerHTML = '<div class="empty"><span class="dot"></span>No active sessions</div>';
       lastDashboardHash = 'empty';
     }
-    document.title = 'Claude Sessions';
+    document.title = federationLocalName + ' \\u2014 Claude Sessions';
     return;
   }
   const needAttention = sessions.filter(s =>
     s.state === 'permission_prompt' || s.state === 'elicitation' || s.state === 'plan_review' || s.state === 'idle'
   ).length;
-  document.title = needAttention > 0 ? '(' + needAttention + ') Claude Sessions' : 'Claude Sessions';
+  var baseTitle = federationLocalName + ' \\u2014 Claude Sessions';
+  document.title = needAttention > 0 ? '(' + needAttention + ') ' + baseTitle : baseTitle;
 
   const collapsedSet = getCollapsedSet();
 
@@ -1736,6 +1739,236 @@ document.getElementById('promptInput').addEventListener('paste', function(e) {
 pollTimer = setInterval(() => {
   if (currentView === 'dashboard') fetchSessions();
 }, 2000);
+</script>
+</body>
+</html>"""
+
+
+# ── MultiView Page ──
+MULTIVIEW_PAGE = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MultiView — Claude Sessions</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    min-height: 100vh;
+  }
+
+  .mv-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px;
+    background: #1a1a2e;
+    border-bottom: 1px solid #2a2a4a;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .mv-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #a78bfa;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .mv-title:hover { color: #c4b5fd; }
+
+  .mv-sep {
+    width: 1px;
+    height: 20px;
+    background: #2a2a4a;
+    flex-shrink: 0;
+  }
+
+  .mv-btn {
+    background: #2a2a4a;
+    border: 1px solid #3a3a5a;
+    color: #c0c0d0;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+
+  .mv-btn:hover { background: #3a3a5a; color: #fff; }
+
+  .mv-btn-openall {
+    background: #a78bfa;
+    border: 1px solid #a78bfa;
+    border-radius: 5px;
+    color: #0e0e1a;
+    cursor: pointer;
+    padding: 5px 14px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+
+  .mv-btn-openall:hover { background: #c4b5fd; border-color: #c4b5fd; }
+
+  .mv-spacer { flex: 1; }
+
+  .mv-count {
+    font-size: 12px;
+    color: #6a6a8a;
+  }
+
+  .mv-empty {
+    padding: 60px 20px;
+    text-align: center;
+    color: #4a4a6a;
+    font-size: 13px;
+  }
+
+  /* Cards list */
+  .mv-list {
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .mv-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #16162a;
+    border: 1px solid #2a2a4a;
+    border-radius: 8px;
+    padding: 12px 16px;
+    transition: border-color 0.15s;
+  }
+
+  .mv-card:hover { border-color: #3a3a5a; }
+
+  .mv-card-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: #e0e0e0;
+    min-width: 100px;
+    flex-shrink: 0;
+  }
+
+  .mv-card-url {
+    flex: 1;
+    font-size: 12px;
+    color: #6a6a8a;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .mv-card-self {
+    font-size: 11px;
+    color: #4a4a6a;
+    background: #2a2a4a;
+    padding: 2px 8px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .mv-card-open {
+    background: #a78bfa22;
+    border: 1px solid #a78bfa55;
+    border-radius: 5px;
+    color: #a78bfa;
+    cursor: pointer;
+    padding: 5px 14px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    transition: all 0.15s;
+    flex-shrink: 0;
+    white-space: nowrap;
+    text-decoration: none;
+  }
+
+  .mv-card-open:hover { background: #a78bfa33; border-color: #a78bfa; }
+</style>
+</head>
+<body>
+<div class="mv-toolbar">
+  <a class="mv-title" href="/">Claude Sessions</a>
+  <span class="mv-sep"></span>
+  <span class="mv-count" id="mvCount"></span>
+  <span class="mv-spacer"></span>
+  <button class="mv-btn" onclick="refresh()">Refresh</button>
+  <button class="mv-btn-openall" onclick="openAll()">Open All</button>
+</div>
+
+<div class="mv-list" id="mvList"></div>
+
+<script>
+var listEl = document.getElementById('mvList');
+var countEl = document.getElementById('mvCount');
+var remotes = [];
+var LOCAL = location.origin;
+
+function escHtml(s) {
+  var d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function getUrl(r) {
+  return r.url || LOCAL;
+}
+
+function render() {
+  if (remotes.length === 0) {
+    listEl.innerHTML = '<div class="mv-empty">No remotes registered. Start servers with --hub to register.</div>';
+    countEl.textContent = '';
+    return;
+  }
+  countEl.textContent = remotes.length + ' machine' + (remotes.length > 1 ? 's' : '');
+  listEl.innerHTML = '';
+  remotes.forEach(function(r) {
+    var url = getUrl(r);
+    var isSelf = !r.url;
+    var div = document.createElement('div');
+    div.className = 'mv-card';
+    div.innerHTML =
+      '<span class="mv-card-name">' + escHtml(r.name) + '</span>' +
+      '<span class="mv-card-url">' + escHtml(url) + '</span>' +
+      (isSelf ? '<span class="mv-card-self">this server</span>' : '') +
+      '<a class="mv-card-open" href="' + escHtml(url) + '" target="_blank">Open</a>';
+    listEl.appendChild(div);
+  });
+}
+
+function refresh() {
+  fetch('/api/multiview/remotes')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      remotes = data.remotes || [];
+      render();
+    })
+    .catch(function() {});
+}
+
+function openAll() {
+  remotes.forEach(function(r) {
+    window.open(getUrl(r), '_blank');
+  });
+}
+
+refresh();
+setInterval(refresh, 15000);
 </script>
 </body>
 </html>"""

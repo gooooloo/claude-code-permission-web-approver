@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, urlparse
 import uuid
 import cgi
 
-from frontend import HTML_PAGE
+from frontend import HTML_PAGE, MULTIVIEW_PAGE
 from platform_utils import IS_WINDOWS, get_queue_dir, get_image_dir, is_process_alive, find_claude_pid, get_process_children, get_process_name, encode_project_path
 
 try:
@@ -200,6 +200,12 @@ def check_smart_auto_approve(data):
 remote_servers = []          # [{"name": str, "url": str}]
 local_name = "local"
 session_machine_map = {}     # {session_id: remote_url or None(local)}
+
+# ── MultiView remote registry ──
+# Remotes self-register via POST /api/multiview/register and heartbeat periodically.
+# Entries expire after 90 seconds without heartbeat.
+multiview_remotes = {}       # {name: {"url": str, "last_seen": float}}
+multiview_remotes_lock = threading.Lock()
 
 
 def proxy_to_remote(remote_url, path, method="GET", body=None, headers=None):
@@ -692,6 +698,21 @@ class WebUIHandler(BaseHTTPRequestHandler):
         if path == "/":
             self._respond_html(HTML_PAGE)
 
+        elif path == "/multiview":
+            self._respond_html(MULTIVIEW_PAGE)
+
+        elif path == "/api/multiview/remotes":
+            now = time.time()
+            with multiview_remotes_lock:
+                # Clean expired (>90s no heartbeat)
+                expired = [k for k, v in multiview_remotes.items() if now - v["last_seen"] > 90]
+                for k in expired:
+                    del multiview_remotes[k]
+                result = [{"name": k, "url": v["url"]} for k, v in multiview_remotes.items()]
+            # Include self
+            result.insert(0, {"name": local_name, "url": ""})
+            self._respond_json({"remotes": result})
+
         elif path == "/api/sessions":
             # Update all session states from transcripts
             with sessions_lock:
@@ -1162,6 +1183,18 @@ class WebUIHandler(BaseHTTPRequestHandler):
             print(f"[*] Session end (legacy): session={sid}")
             self._respond_json({"ok": True})
 
+        elif path == "/api/multiview/register":
+            body = self._read_json()
+            name = body.get("name", "")
+            url = body.get("url", "")
+            if not name or not url:
+                self.send_error(400, "Missing name or url")
+                return
+            with multiview_remotes_lock:
+                multiview_remotes[name] = {"url": url, "last_seen": time.time()}
+            print(f"[*] MultiView: registered remote '{name}' -> {url}")
+            self._respond_json({"ok": True})
+
         else:
             self.send_error(404)
 
@@ -1326,11 +1359,64 @@ def scan_existing_sessions():
                 print(f"[*] Auto-discovered session: {session_id} pane={pane_id} cwd={cwd}")
 
 
+def detect_devtunnel_id():
+    """Auto-detect devtunnel ID by parsing 'devtunnel list' output.
+
+    Typical output format:
+        Tunnel ID            Description    Hosting Status
+        ---                  ---            ---
+        abc123def (my-vm)                   Connected
+        xyz789ghi                           Not hosted
+
+    Returns the tunnel ID of the first connected tunnel, or first tunnel if none connected.
+    """
+    try:
+        result = subprocess.run(
+            ["devtunnel", "list"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            print(f"[!] devtunnel list failed: {result.stderr.strip()}")
+            return None
+
+        lines = result.stdout.strip().splitlines()
+        first_id = None
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("Tunnel") or line.startswith("---"):
+                continue
+            # First token is the tunnel ID (possibly followed by "(name)" alias)
+            token = line.split()[0]
+            if not token or token == "---":
+                continue
+            if not first_id:
+                first_id = token
+            # Prefer a connected/hosted tunnel
+            if "connect" in line.lower():
+                print(f"[*] Auto-detected devtunnel: {token}")
+                return token
+
+        if first_id:
+            print(f"[*] Auto-detected devtunnel (no active host found, using first): {first_id}")
+        return first_id
+    except FileNotFoundError:
+        print("[!] 'devtunnel' CLI not found in PATH")
+        return None
+    except Exception as e:
+        print(f"[!] devtunnel detection failed: {e}")
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="Claude Code WebUI Server")
     parser.add_argument("--remotes", help="Path to remotes.json (default: remotes.json in script dir)")
     parser.add_argument("--name", default="local", help="Name for this machine in dashboard (default: local)")
     parser.add_argument("--lan", action="store_true", help="Listen on 0.0.0.0 instead of 127.0.0.1 (allow LAN access)")
+    parser.add_argument("--hub", help="URL of central MultiView hub, or use --hub-tunnel-id for shorthand")
+    parser.add_argument("--hub-tunnel-id", help="DevTunnels ID of the hub (e.g. abc123), expands to https://abc123-19836.asse.devtunnels.ms")
+    parser.add_argument("--tunnel-id", help="DevTunnels ID for this machine (e.g. 1c6j6jlh), used to derive public URL")
+    parser.add_argument("--detect-tunnel", action="store_true", help="Auto-detect devtunnel ID by running 'devtunnel list'")
+    parser.add_argument("--self-url", help="This machine's public URL to report to hub (overrides --tunnel-id and --detect-tunnel)")
     args = parser.parse_args()
 
     global local_name, remote_servers
@@ -1373,6 +1459,35 @@ def main():
             start_teams_channel()
         except Exception as e:
             print(f"[teams] Failed to start: {e}")
+
+    # MultiView hub registration heartbeat
+    hub_arg = args.hub
+    if not hub_arg and args.hub_tunnel_id:
+        hub_arg = f"https://{args.hub_tunnel_id}-{PORT}.asse.devtunnels.ms"
+    if hub_arg:
+        hub_url = hub_arg.rstrip("/")
+        # Determine this machine's public URL
+        self_url = args.self_url
+        tunnel_id = args.tunnel_id
+        if not self_url and not tunnel_id and args.detect_tunnel:
+            tunnel_id = detect_devtunnel_id()
+        if not self_url and tunnel_id:
+            self_url = f"https://{tunnel_id}-{PORT}.asse.devtunnels.ms"
+        if not self_url:
+            print("[!] MultiView: --hub requires --tunnel-id, --detect-tunnel, or --self-url")
+            sys.exit(1)
+        def hub_heartbeat():
+            while True:
+                try:
+                    payload = json.dumps({"name": local_name, "url": self_url}).encode()
+                    req = urllib.request.Request(hub_url + "/api/multiview/register", data=payload, method="POST")
+                    req.add_header("Content-Type", "application/json")
+                    urllib.request.urlopen(req, timeout=10)
+                except Exception as e:
+                    print(f"[!] MultiView hub heartbeat failed: {e}")
+                time.sleep(30)
+        threading.Thread(target=hub_heartbeat, daemon=True).start()
+        print(f"[*] MultiView: registering with hub {hub_url} as '{local_name}' ({self_url})")
 
     bind_addr = "0.0.0.0" if args.lan else "127.0.0.1"
     server = HTTPServer((bind_addr, PORT), WebUIHandler)

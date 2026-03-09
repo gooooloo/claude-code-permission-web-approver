@@ -66,6 +66,7 @@ Claude Code (in tmux)                Web browser
 - **AskUserQuestion support** — answer Claude's questions with option selection or custom text
 - **Plan review** — approve, deny, or provide feedback on plans
 - **Image upload** — attach images in the prompt area
+- **MultiView** — centralized page to monitor the same service across multiple machines via DevTunnels
 - **Feishu integration** — optional notification channel for mobile approval
 - **Graceful fallback** — hooks auto-approve when server is offline
 - **Auto-cleanup** — zombie sessions (dead PIDs) cleaned up automatically
@@ -124,6 +125,46 @@ cd /path/to/claude-code-webui && git pull
 ```
 
 The new install script automatically cleans up old `.sh` symlinks.
+
+## MultiView (multi-machine monitoring)
+
+MultiView lets you monitor the same WebUI service running on multiple machines from a single page. Remote servers self-register with a central hub; the MultiView page auto-discovers all machines and provides quick-open links.
+
+### Setup
+
+1. **Create a persistent DevTunnel on each machine** (one-time):
+   ```bash
+   devtunnel create --id my-machine
+   devtunnel port create --tunnel-id my-machine --port-number 19836
+   ```
+
+2. **Start the hub** (the central machine you'll access):
+   ```bash
+   python3 server.py --lan --name hub
+   devtunnel host --tunnel-id hub-machine
+   ```
+
+3. **Start remote servers** with `--hub-tunnel-id` pointing to the hub:
+   ```bash
+   # With explicit tunnel ID
+   python3 server.py --lan --name "GPU-A100" --tunnel-id 1c6j6jlh --hub-tunnel-id abc123
+
+   # Or auto-detect tunnel ID
+   python3 server.py --lan --name "GPU-A100" --detect-tunnel --hub-tunnel-id abc123
+   ```
+
+4. Open `https://<hub-tunnel-id>-19836.asse.devtunnels.ms/multiview` — all registered machines appear automatically.
+
+### CLI arguments
+
+| Argument | Purpose |
+|----------|---------|
+| `--hub <url>` | Full URL of the hub server |
+| `--hub-tunnel-id <id>` | DevTunnels ID of the hub (shorthand) |
+| `--tunnel-id <id>` | This machine's DevTunnels ID |
+| `--detect-tunnel` | Auto-detect devtunnel ID via `devtunnel list` |
+| `--self-url <url>` | This machine's public URL (overrides tunnel ID) |
+| `--name <name>` | Display name for this machine (default: `local`) |
 
 ## Security note
 
