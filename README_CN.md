@@ -4,10 +4,10 @@
 
 ## 架构
 
-**基于 transcript 驱动，Tmux 投递 prompt，3 个 Python hook。**
+**基于 transcript 驱动，跨平台（Linux/macOS 用 Tmux，Windows 用 Windows Terminal），3 个 Python hook。**
 
 - 所有会话状态从 Claude Code 的 transcript JSONL 文件推导，服务端不维护状态机
-- Prompt 通过 `tmux send-keys` 投递，不依赖文件轮询
+- Prompt 通过平台原生方式投递（Linux/macOS 用 `tmux send-keys`，Windows 用 `WriteConsoleInput`），不依赖文件轮询
 - 只有 3 个 hook 脚本（纯 Python，不依赖 jq、curl 等外部工具）
 
 ### 工作流程
@@ -32,26 +32,30 @@ Claude Code                          Web 浏览器
       |   (allow 或 deny)                 |
 ```
 
-**Prompt 提交流程 (tmux)：**
+**Prompt 提交流程：**
 ```
-Claude Code (tmux 内)                Web 浏览器
+Claude Code                          Web 浏览器
       |                                   |
       |          server.py                |
       |          显示会话 dashboard       |
       |          带 prompt 输入框  ----> |  用户输入 prompt
       |                                   |  点击 Send
       |                                   |
-      |<-- tmux send-keys 投递 prompt     |
+      |<-- prompt 投递                    |
+      |    tmux send-keys (Linux/macOS)   |
+      |    或 WriteConsoleInput (Windows) |
 ```
 
 ### 组件
 
 1. **`server.py`** — Python HTTP 服务器（端口 19836）。会话注册、transcript 解析、多会话 dashboard。
 2. **`permission-request.py`** — `PermissionRequest` hook。自动放行检查，写入 `.request.json`，轮询 `.response.json`。
-3. **`session-start.py`** — `SessionStart` hook。向服务器注册会话（transcript 路径、tmux 信息、cwd）。
+3. **`session-start.py`** — `SessionStart` hook。向服务器注册会话（transcript 路径、tmux/console 信息、cwd）。
 4. **`session-end.py`** — `SessionEnd` hook。注销会话，清理文件。
-5. **`channel_feishu.py`** — 可选的飞书通知渠道。
-6. **`install.sh`** / **`uninstall.sh`** — Hook 安装脚本。
+5. **`platform_utils.py`** — 跨平台工具。OS 检测、临时目录路径、进程树遍历。
+6. **`win_send_keys.py`** — Windows console 输入辅助。通过 `WriteConsoleInputW` 注入键盘输入。
+7. **`channel_feishu.py`** — 可选的飞书通知渠道。
+8. **`install.sh`** / **`uninstall.sh`** — Hook 安装脚本（Linux/macOS）。**`install.ps1`** / **`uninstall.ps1`** — Windows 版（PowerShell）。
 
 ## 功能
 
@@ -62,7 +66,7 @@ Claude Code (tmux 内)                Web 浏览器
 - **Allow Path** — 对 Write/Edit 工具，放行整个目录下的操作
 - **Split Always Allow** — 复合 Bash 命令拆分为单独的模式
 - **Session 级自动放行** — 对单个会话自动审批特定工具
-- **Prompt 提交** — 在 dashboard 中通过 tmux 发送后续 prompt
+- **Prompt 提交** — 在 dashboard 中发送后续 prompt（Linux/macOS 通过 tmux，Windows 通过 console 输入）
 - **AskUserQuestion 支持** — 用选项或自定义文本回答 Claude 的提问
 - **Plan review** — 审批、拒绝或反馈计划
 - **图片上传** — 在 prompt 区域附加图片
@@ -74,10 +78,14 @@ Claude Code (tmux 内)                Web 浏览器
 
 ## 依赖
 
+**Linux/macOS：**
 - Python 3
 - tmux（prompt 投递必需）
-- Bash（安装/卸载脚本）
-- `jq`（仅安装/卸载脚本需要）
+- Bash、`jq`（安装/卸载脚本）
+
+**Windows：**
+- Python 3
+- PowerShell 5.1+（安装/卸载脚本）
 
 ## 安装
 
@@ -92,6 +100,8 @@ Claude Code (tmux 内)                Web 浏览器
    ```
 
 3. 安装 hook：
+
+   **Linux/macOS：**
    ```bash
    # 仅当前项目（在项目目录下执行）：
    /path/to/claude-code-webui/install.sh --project
@@ -103,11 +113,23 @@ Claude Code (tmux 内)                Web 浏览器
    /path/to/claude-code-webui/install.sh --all
    ```
 
+   **Windows (PowerShell)：**
+   ```powershell
+   # 仅当前项目：
+   \path\to\claude-code-webui\install.ps1 -Scope Project
+
+   # 或全局安装：
+   \path\to\claude-code-webui\install.ps1 -Scope Global
+
+   # 或两者都装：
+   \path\to\claude-code-webui\install.ps1 -Scope All
+   ```
+
 4. 如果 Claude Code 已在运行，**需要重启** — hook 在启动时加载。
 
 5. 在浏览器打开 `http://localhost:19836`（或用局域网 IP 从手机/平板访问）。
 
-6. 在 **tmux 内** 运行 Claude Code — dashboard 会自动显示你的会话。
+6. 运行 Claude Code — Linux/macOS 在 **tmux 内** 运行，Windows 在 **Windows Terminal** 内运行。Dashboard 会自动显示你的会话。
 
 ## Machines（多机监控）
 

@@ -4,10 +4,10 @@ A web UI for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that 
 
 ## Architecture
 
-**Transcript-driven, Tmux-only, 3 Python hooks.**
+**Transcript-driven, cross-platform (Tmux on Linux/macOS, Windows Terminal on Windows), 3 Python hooks.**
 
 - All session state is derived from Claude Code's transcript JSONL files — the server doesn't maintain a state machine
-- Prompts are delivered via `tmux send-keys` — no file polling for prompt submission
+- Prompts are delivered via platform-native mechanisms (`tmux send-keys` on Linux/macOS, `WriteConsoleInput` on Windows) — no file polling for prompt submission
 - Only 3 hook scripts (all Python, no external dependencies like jq or curl)
 
 ### How it works
@@ -32,26 +32,30 @@ Claude Code                          Web browser
       |   (allow or deny)                 |
 ```
 
-**Prompt submission flow (tmux):**
+**Prompt submission flow:**
 ```
-Claude Code (in tmux)                Web browser
+Claude Code                          Web browser
       |                                   |
       |          server.py                |
       |          shows session dashboard  |
       |          with prompt input  ----> |  User types prompt
       |                                   |  clicks Send
       |                                   |
-      |<-- tmux send-keys delivers prompt |
+      |<-- prompt delivered via           |
+      |    tmux send-keys (Linux/macOS)   |
+      |    or WriteConsoleInput (Windows) |
 ```
 
 ### Components
 
 1. **`server.py`** — Python HTTP server (port 19836). Session registry, transcript parser, multi-session dashboard.
 2. **`permission-request.py`** — `PermissionRequest` hook. Auto-allow check, writes `.request.json`, polls for `.response.json`.
-3. **`session-start.py`** — `SessionStart` hook. Registers session with server (transcript path, tmux info, cwd).
+3. **`session-start.py`** — `SessionStart` hook. Registers session with server (transcript path, tmux/console info, cwd).
 4. **`session-end.py`** — `SessionEnd` hook. Deregisters session, cleans up files.
-5. **`channel_feishu.py`** — Optional Feishu (Lark) notification channel.
-6. **`install.sh`** / **`uninstall.sh`** — Hook installation scripts.
+5. **`platform_utils.py`** — Cross-platform utilities. OS detection, temp directory paths, process tree walking.
+6. **`win_send_keys.py`** — Windows console input helper. Injects keyboard input via `WriteConsoleInputW`.
+7. **`channel_feishu.py`** — Optional Feishu (Lark) notification channel.
+8. **`install.sh`** / **`uninstall.sh`** — Hook installation scripts (Linux/macOS). **`install.ps1`** / **`uninstall.ps1`** — Windows equivalents (PowerShell).
 
 ## Features
 
@@ -62,7 +66,7 @@ Claude Code (in tmux)                Web browser
 - **Allow Path** — for Write/Edit tools, allow all operations under a directory
 - **Split Always Allow** — compound Bash commands split into individual patterns
 - **Session-level auto-allow** — auto-approve specific tools for a session
-- **Prompt submission** — send follow-up prompts via tmux from the dashboard
+- **Prompt submission** — send follow-up prompts from the dashboard (via tmux on Linux/macOS, console input on Windows)
 - **AskUserQuestion support** — answer Claude's questions with option selection or custom text
 - **Plan review** — approve, deny, or provide feedback on plans
 - **Image upload** — attach images in the prompt area
@@ -74,10 +78,14 @@ Claude Code (in tmux)                Web browser
 
 ## Requirements
 
+**Linux/macOS:**
 - Python 3
 - tmux (required for prompt delivery)
-- Bash (for install/uninstall scripts)
-- `jq` (for install/uninstall scripts only)
+- Bash, `jq` (for install/uninstall scripts)
+
+**Windows:**
+- Python 3
+- PowerShell 5.1+ (for install/uninstall scripts)
 
 ## Installation
 
@@ -92,6 +100,8 @@ Claude Code (in tmux)                Web browser
    ```
 
 3. Install the hooks:
+
+   **Linux/macOS:**
    ```bash
    # For a single project (run from project directory):
    /path/to/claude-code-webui/install.sh --project
@@ -103,11 +113,23 @@ Claude Code (in tmux)                Web browser
    /path/to/claude-code-webui/install.sh --all
    ```
 
+   **Windows (PowerShell):**
+   ```powershell
+   # For a single project:
+   \path\to\claude-code-webui\install.ps1 -Scope Project
+
+   # Or install globally:
+   \path\to\claude-code-webui\install.ps1 -Scope Global
+
+   # Or both:
+   \path\to\claude-code-webui\install.ps1 -Scope All
+   ```
+
 4. **Restart Claude Code** if it's already running — hooks are loaded at startup.
 
 5. Open `http://localhost:19836` in your browser (or use your machine's LAN IP from a phone/tablet).
 
-6. Run Claude Code **inside tmux** — the dashboard will show your sessions and let you interact.
+6. Run Claude Code — on Linux/macOS run it **inside tmux**; on Windows run it in **Windows Terminal**. The dashboard will show your sessions and let you interact.
 
 ## Machines (multi-machine monitoring)
 
