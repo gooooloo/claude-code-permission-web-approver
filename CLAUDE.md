@@ -36,7 +36,8 @@ A web UI for Claude Code that replaces default terminal prompts with a browser-b
 
 ```bash
 # Start the server (Linux/macOS/Windows)
-python3 server.py   # or: python server.py on Windows
+python3 server.py          # localhost only (default)
+python3 server.py --lan    # bind 0.0.0.0 for LAN access
 
 # Development mode (auto-restart on file changes, requires entr, Linux/macOS only)
 ./dev.sh
