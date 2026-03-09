@@ -66,7 +66,7 @@ Claude Code (tmux 内)                Web 浏览器
 - **AskUserQuestion 支持** — 用选项或自定义文本回答 Claude 的提问
 - **Plan review** — 审批、拒绝或反馈计划
 - **图片上传** — 在 prompt 区域附加图片
-- **DevTunnel Machines** — 通过 DevTunnels 在一个页面集中监控多台机器上的同一服务
+- **Machines** — 通过 DevTunnels 在一个页面集中监控多台机器上的同一服务
 - **飞书集成** — 可选的通知渠道，支持手机审批
 - **优雅降级** — 服务器离线时 hook 自动放行
 - **自动清理** — 僵尸会话（已死进程）自动清理
@@ -109,9 +109,9 @@ Claude Code (tmux 内)                Web 浏览器
 
 6. 在 **tmux 内** 运行 Claude Code — dashboard 会自动显示你的会话。
 
-## DevTunnel Machines（多机监控）
+## Machines（多机监控）
 
-DevTunnel Machines 让你在一个页面上访问多台机器上运行的同一个 WebUI 服务。远程服务器向中心 hub 自动注册，DevTunnel Machines 页面自动发现所有机器并提供快捷打开链接。
+Machines 让你在一个页面上访问多台机器上运行的同一个 WebUI 服务。远程服务器向中心 hub 自动注册，Machines 页面自动发现所有机器并提供快捷打开链接。
 
 ### DevTunnels 配置（每台机器一次性操作）
 
@@ -151,7 +151,7 @@ devtunnel host --tunnel-id my-machine
 > ```
 > 每个端口有独立的 URL：`https://<random-id>-8080.asse.devtunnels.ms` 等。
 
-### DevTunnel Machines 配置
+### Machines 配置
 
 1. **选一台机器作为 hub**（你在浏览器上打开的那台）：
    ```bash

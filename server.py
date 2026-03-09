@@ -201,7 +201,7 @@ remote_servers = []          # [{"name": str, "url": str}]
 local_name = "local"
 session_machine_map = {}     # {session_id: remote_url or None(local)}
 
-# ── DevTunnel Machines remote registry ──
+# ── Machines remote registry ──
 # Remotes self-register via POST /api/multiview/register and heartbeat periodically.
 # Entries expire after 90 seconds without heartbeat.
 multiview_remotes = {}       # {name: {"url": str, "last_seen": float}}
@@ -1192,7 +1192,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
                 return
             with multiview_remotes_lock:
                 multiview_remotes[name] = {"url": url, "last_seen": time.time()}
-            print(f"[*] DevTunnel Machines: registered remote '{name}' -> {url}")
+            print(f"[*] Machines: registered remote '{name}' -> {url}")
             self._respond_json({"ok": True})
 
         else:
@@ -1465,13 +1465,13 @@ def main():
         except Exception as e:
             print(f"[teams] Failed to start: {e}")
 
-    # DevTunnel Machines hub registration heartbeat
+    # Machines hub registration heartbeat
     if args.hub_tunnel_id:
         hub_url = f"https://{args.hub_tunnel_id}-{PORT}.asse.devtunnels.ms"
         if tunnel_id:
             self_url = f"https://{tunnel_id}-{PORT}.asse.devtunnels.ms"
         else:
-            print("[!] DevTunnel Machines: --hub-tunnel-id requires --tunnel-id or --detect-tunnel")
+            print("[!] Machines: --hub-tunnel-id requires --tunnel-id or --detect-tunnel")
             sys.exit(1)
         def hub_heartbeat():
             while True:
@@ -1481,10 +1481,10 @@ def main():
                     req.add_header("Content-Type", "application/json")
                     urllib.request.urlopen(req, timeout=10)
                 except Exception as e:
-                    print(f"[!] DevTunnel Machines hub heartbeat failed: {e}")
+                    print(f"[!] Machines hub heartbeat failed: {e}")
                 time.sleep(30)
         threading.Thread(target=hub_heartbeat, daemon=True).start()
-        print(f"[*] DevTunnel Machines: registering with hub {hub_url} as '{local_name}' ({self_url})")
+        print(f"[*] Machines: registering with hub {hub_url} as '{local_name}' ({self_url})")
 
     bind_addr = "0.0.0.0" if args.lan else "127.0.0.1"
     server = HTTPServer((bind_addr, PORT), WebUIHandler)

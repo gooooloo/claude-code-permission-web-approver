@@ -39,13 +39,13 @@ A web UI for Claude Code that replaces default terminal prompts with a browser-b
 python3 server.py          # localhost only (default)
 python3 server.py --lan    # bind 0.0.0.0 for LAN access
 
-# DevTunnel Machines hub mode (central machine)
+# Machines hub mode (central machine)
 python3 server.py --name hub
 
-# DevTunnel Machines remote (register with hub, manual tunnel ID)
+# Machines remote (register with hub, manual tunnel ID)
 python3 server.py --name "GPU-A100" --tunnel-id 1c6j6jlh --hub-tunnel-id abc123
 
-# DevTunnel Machines remote (auto-detect tunnel ID)
+# Machines remote (auto-detect tunnel ID)
 python3 server.py --name "GPU-A100" --detect-tunnel --hub-tunnel-id abc123
 
 # Development mode (auto-restart on file changes, requires entr, Linux/macOS only)
@@ -137,12 +137,12 @@ Queue dir: `/tmp/claude-webui` (Linux/macOS) or `%TEMP%\claude-webui` (Windows).
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | GET | `/` | Dashboard HTML |
-| GET | `/multiview` | DevTunnel Machines page (multi-machine link panel) |
+| GET | `/multiview` | Machines page (multi-machine link panel) |
 | GET | `/api/sessions` | All sessions with transcript-derived state |
 | GET | `/api/session/<id>/transcript` | Parsed transcript entries |
 | GET | `/api/pending` | Pending permission requests |
 | GET | `/api/image?path=` | Serve uploaded images |
-| GET | `/api/multiview/remotes` | Registered remote machines for DevTunnel Machines |
+| GET | `/api/multiview/remotes` | Registered remote machines for Machines |
 | POST | `/api/session/register` | Register/update session |
 | POST | `/api/session/deregister` | Deregister session |
 | POST | `/api/respond` | Approve/deny permission |
@@ -153,8 +153,8 @@ Queue dir: `/tmp/claude-webui` (Linux/macOS) or `%TEMP%\claude-webui` (Windows).
 | POST | `/api/session-reset` | Clear session auto-allow rules (legacy) |
 | POST | `/api/session-end` | Remove session and clear auto-allow (legacy) |
 
-### DevTunnel Machines
-DevTunnel Machines (`/multiview`) provides a centralized page to access the same WebUI service across multiple machines. Remote servers register with a hub via heartbeat; the DevTunnel Machines page auto-discovers and lists all registered machines.
+### Machines
+Machines (`/multiview`) provides a centralized page to access the same WebUI service across multiple machines. Remote servers register with a hub via heartbeat; the Machines page auto-discovers and lists all registered machines.
 
 **CLI arguments for hub registration:**
 
@@ -167,7 +167,7 @@ DevTunnel Machines (`/multiview`) provides a centralized page to access the same
 **How it works:**
 - Remote servers with `--hub-tunnel-id` send a heartbeat (`POST /api/multiview/register`) every 30 seconds with their name and public URL
 - The hub keeps an in-memory registry; entries expire after 90 seconds without heartbeat
-- The DevTunnel Machines page polls `GET /api/multiview/remotes` every 15 seconds and lists all machines with "Open" links (new tab)
+- The Machines page polls `GET /api/multiview/remotes` every 15 seconds and lists all machines with "Open" links (new tab)
 
 ## Writing Conventions
 - All documentation must be written in English.

@@ -653,7 +653,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <div class="header">
   <button class="back-btn" id="backBtn" onclick="showDashboard()">Back</button>
   <h1 id="pageTitle" ondblclick="window.scrollTo({top:0,behavior:'smooth'})">Claude Sessions</h1>
-  <a href="/multiview" class="btn-scroll-bottom" style="display:flex;text-decoration:none">DevTunnel Machines</a>
+  <a href="/multiview" class="btn-scroll-bottom" style="display:flex;text-decoration:none">Machines</a>
   <button class="btn-scroll-bottom" id="collapseAllBtn" onclick="collapseAll()" style="display:flex">Collapse All</button>
   <button class="btn-scroll-bottom" id="scrollBottomBtn" onclick="window.scrollTo({top:document.documentElement.scrollHeight,behavior:'smooth'})">Bottom</button>
 </div>
@@ -1744,13 +1744,13 @@ pollTimer = setInterval(() => {
 </html>"""
 
 
-# ── DevTunnel Machines Page ──
+# ── Machines Page ──
 MULTIVIEW_PAGE = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DevTunnel Machines — Claude Sessions</title>
+<title>Machines — Claude Sessions</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
