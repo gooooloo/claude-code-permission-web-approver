@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """
-PermissionRequest hook for Claude Code WebUI (new architecture).
+PermissionRequest hook for Claude Code WebUI.
 
 Called before Claude executes a tool that requires permission.
+All auto-allow logic is centralized here; the server only stores session state.
 
-Flow:
-  1. Reads tool_name and tool_input from stdin (JSON)
-  2. Builds human-readable detail string and allow_pattern per tool type
-  3. Checks settings.local.json for pre-approved glob patterns — if matched, auto-allows
-  4. Checks if the server (port 19836) is reachable — if not, auto-allows (fallback)
-  5. Writes a .request.json file to /tmp/claude-webui/ and polls for a .response.json
-  6. When the user approves/denies via the Web UI, outputs the decision JSON to stdout
-  7. On timeout (24h), denies the request
+Auto-allow tiers (checked in order, first match wins):
+  1. Persistent rules   — glob patterns in .claude/settings.local.json (survive restarts)
+  2. Smart rules         — read-only tools, read-only Bash, project-internal file edits
+  3. Tmux allowlist      — tmux commands used by WebUI prompt delivery
+  4. Session rules       — per-session per-tool rules stored in server memory
+                           (set by user clicking "Allow for session" in the UI,
+                           cleared on session end/clear; queried via server API
+                           because the hook is a short-lived process with no memory)
+  5. Server offline      — if the server is unreachable, auto-allow everything
+                           so Claude Code keeps working without the WebUI
+
+If none of the above match, the hook writes a .request.json and polls for a
+.response.json written by the server when the user decides in the Web UI.
 
 Input:  JSON on stdin with { tool_name, tool_input }
 Output: JSON on stdout with { hookSpecificOutput: { decision: { behavior: "allow"|"deny" } } }
@@ -24,6 +30,7 @@ import os
 import re
 import sys
 import time
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -230,14 +237,101 @@ def check_auto_allow(tool_name, detail, settings_file):
     return False
 
 
-def server_is_online():
-    """Check if the server is reachable."""
-    try:
-        req = urllib.request.Request(f"{SERVER}/")
-        urllib.request.urlopen(req, timeout=2)
-        return True
-    except Exception:
+# ── Smart auto-approve ──
+
+READONLY_COMMANDS = {
+    # File viewing
+    "cat", "head", "tail", "less", "more", "wc", "file", "stat", "du", "df",
+    # Directory listing
+    "ls", "tree", "find", "realpath", "dirname", "basename",
+    # Search
+    "grep", "rg", "ag", "fgrep", "egrep",
+    # Version/info
+    "echo", "printf", "date", "whoami", "hostname", "uname", "env", "printenv",
+    "which", "type", "command", "true", "false", "test",
+    # Package info (read-only)
+    "npm", "pip", "pip3", "cargo", "go", "python", "python3", "node", "ruby", "java", "javac",
+}
+
+READONLY_GIT_SUBCOMMANDS = {
+    "log", "diff", "status", "show", "branch", "tag", "remote", "stash",
+    "blame", "shortlog", "describe", "rev-parse", "rev-list", "ls-files",
+    "ls-tree", "cat-file", "config",
+}
+
+DANGEROUS_COMMANDS = {
+    "rm", "rmdir", "mv", "chmod", "chown", "chgrp", "mkfs", "dd",
+    "shutdown", "reboot", "kill", "killall", "pkill",
+    "curl", "wget",  # network access
+    "ssh", "scp", "rsync",  # remote access
+    "sudo", "su", "doas",  # privilege escalation
+}
+
+READONLY_TOOLS = {"Read", "Glob", "Grep", "mcp__acp__Read", "mcp__acp__Glob", "mcp__acp__Grep"}
+
+
+def _is_readonly_bash(command):
+    """Check if a Bash command (possibly compound) is read-only."""
+    parts = re.split(r'\||&&|\|\||;', command)
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        first_line = part.split("\n")[0].strip()
+        tokens = first_line.split()
+        if not tokens:
+            continue
+        base = os.path.basename(tokens[0])
+        if not base:
+            continue
+        if base in DANGEROUS_COMMANDS:
+            return False
+        if base == "sed":
+            if "-i" in tokens or any(t.startswith("-i") for t in tokens[1:]):
+                return False
+            continue
+        if base in ("awk", "gawk", "mawk", "nawk"):
+            continue
+        if base == "git":
+            sub = ""
+            for t in tokens[1:]:
+                if not t.startswith("-"):
+                    sub = t
+                    break
+            if sub not in READONLY_GIT_SUBCOMMANDS:
+                return False
+            continue
+        if base in READONLY_COMMANDS:
+            continue
         return False
+    return True
+
+
+def _is_project_file(file_path, project_dir):
+    """Check if a file path is within the project directory."""
+    if not file_path or not project_dir:
+        return False
+    try:
+        real_file = os.path.realpath(file_path)
+        real_cwd = os.path.realpath(project_dir)
+        return real_file.startswith(real_cwd + os.sep) or real_file == real_cwd
+    except (ValueError, OSError):
+        return False
+
+
+def check_smart_auto_approve(tool_name, tool_input, project_dir):
+    """Check if a tool call should be auto-approved by smart rules."""
+    if tool_name in READONLY_TOOLS:
+        return True
+    if tool_name in ("Bash", "mcp__acp__Bash"):
+        command = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
+        if command and _is_readonly_bash(command):
+            return True
+    if tool_name in ("Write", "Edit", "mcp__acp__Write", "mcp__acp__Edit"):
+        file_path = tool_input.get("file_path", "") if isinstance(tool_input, dict) else ""
+        if _is_project_file(file_path, project_dir):
+            return True
+    return False
 
 
 def main():
@@ -265,19 +359,36 @@ def main():
     # Build detail and patterns
     detail, detail_sub, allow_pattern, allow_patterns = build_detail(tool_name, tool_input)
 
-    # Auto-allow check
+    # ── Auto-allow tiers (first match wins) ──
+
+    # Tier 1: Persistent rules (settings.local.json glob patterns)
     if check_auto_allow(tool_name, detail, settings_file):
         allow_response()
 
-    # Auto-allow tmux commands (used by the WebUI for prompt delivery)
+    # Tier 2: Smart rules (read-only tools, read-only bash, project-internal edits)
+    if check_smart_auto_approve(tool_name, tool_input, project_dir):
+        allow_response()
+
+    # Tier 3: Tmux allowlist (WebUI uses tmux for prompt delivery)
     if tool_name in ("Bash", "mcp__acp__Bash"):
         command = tool_input.get("command", "").strip()
         first_token = command.split()[0] if command.split() else ""
         if os.path.basename(first_token) == "tmux":
             allow_response()
 
-    # Server offline fallback
-    if not server_is_online():
+    # Tier 4: Session rules (per-session per-tool, stored in server memory)
+    # Queried via API because this hook is a short-lived process with no memory.
+    # This call also doubles as the server-online check (tier 5).
+    try:
+        req = urllib.request.Request(
+            f"{SERVER}/api/check-auto-allow?session_id={urllib.parse.quote(str(session_id))}"
+            f"&tool_name={urllib.parse.quote(tool_name)}")
+        resp = urllib.request.urlopen(req, timeout=2)
+        data = json.loads(resp.read())
+        if data.get("auto_allow"):
+            allow_response()
+    except Exception:
+        # Tier 5: Server offline — allow everything so Claude keeps working
         allow_response()
 
     # Generate request ID

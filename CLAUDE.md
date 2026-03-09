@@ -17,9 +17,9 @@ A web UI for Claude Code that replaces default terminal prompts with a browser-b
 
 ## Architecture
 
-- **server.py** — Python HTTP server (port 19836). Session registry, transcript incremental parser, multi-session dashboard UI, API endpoints. Background threads for auto-allow and zombie session cleanup.
+- **server.py** — Python HTTP server (port 19836). Session registry, transcript incremental parser, multi-session dashboard UI, API endpoints. Background thread for zombie session cleanup. Stores volatile session-level auto-allow rules in memory (queried by hook via API).
 - **frontend.py** — Extracted HTML/CSS/JS for the dashboard UI. Imported by server.py.
-- **hook-permission-request.py** — `PermissionRequest` hook. Parses tool calls, checks `settings.local.json` for pre-approved glob patterns, falls back to auto-allow if server is offline, otherwise queues a request JSON and polls for response.
+- **hook-permission-request.py** — `PermissionRequest` hook. All auto-allow decision logic is centralized here (persistent rules, smart rules, session rules via server API query). Falls back to auto-allow if server is offline. If nothing matches, queues a request JSON and polls for response.
 - **hook-session-start.py** — `SessionStart` hook. Discovers transcript path, POSTs to `/api/session/register` with tmux pane/socket (Linux) or console_pid (Windows), cwd, and source.
 - **hook-session-end.py** — `SessionEnd` hook. POSTs to `/api/session/deregister`, local fallback cleanup of request files.
 - **platform_utils.py** — Cross-platform utilities. OS detection, temp directory paths, process tree walking (via `/proc` on Linux, `CreateToolhelp32Snapshot` on Windows), path encoding.
@@ -80,8 +80,21 @@ No build step, no test suite, no linter.
 
 ## Key Conventions
 
+### Auto-Allow Tiers
+All auto-allow logic lives in `hook-permission-request.py`. Checked in order, first match wins:
+
+| Tier | Name | Where it lives | Lifetime | Example |
+|------|------|---------------|----------|---------|
+| 1 | Persistent rules | `.claude/settings.local.json` | Survives restarts | `Bash(git commit:*)` |
+| 2 | Smart rules | Hook code | Always on | Read-only tools, read-only Bash, project-internal edits |
+| 3 | Tmux allowlist | Hook code | Always on | `tmux send-keys` (used by WebUI prompt delivery) |
+| 4 | Session rules | Server memory, queried via `GET /api/check-auto-allow` | Until session end/clear/restart | User clicks "Allow for session" in UI |
+| 5 | Server offline | Hook code | Fallback | Server unreachable → allow everything |
+
+**Why session rules live on the server, not the hook:** The hook is a short-lived process (runs once per permission request, then exits). It has no persistent memory. Session rules need to survive across multiple hook invocations within a session, so they're stored in the server's memory and queried via API. They can't be written to a file by the hook because the server manages their lifecycle (cleared on session end, clear, zombie cleanup, pane eviction).
+
 ### Allow Pattern Format
-Patterns in `settings.local.json` use `ToolName(pattern)` format with glob matching:
+Patterns in `settings.local.json` (tier 1) use `ToolName(pattern)` format with glob matching:
 - `Bash(git commit:*)` — `:*` suffix means "starts with"
 - `Write(/some/path/*)` — directory-scoped write permission
 - `Read`, `WebFetch` — tool-level blanket allow
@@ -96,7 +109,7 @@ Patterns in `settings.local.json` use `ToolName(pattern)` format with glob match
 - Session ID = PPID (Claude Code's process ID)
 - Sessions are registered via `/api/session/register` (from hook-session-start.py hook)
 - Session state is derived from transcript JSONL (not stored as a state machine)
-- Session-level auto-allow rules are stored in-memory on the server as `{(session_id, tool_name): True}`
+- Session-level auto-allow rules: see tier 4 in [Auto-Allow Tiers](#auto-allow-tiers)
 - Zombie sessions (dead PIDs) are cleaned up every 30 seconds
 - **Pane/console eviction:** when a new session registers on the same tmux pane (Linux) or console_pid (Windows), previous sessions on that pane/console are automatically evicted (including their auto-allow rules)
 - **Registration source parameter:** the `source` field (`startup`, `resume`, `clear`, `compact`) controls behavior:
@@ -140,6 +153,7 @@ Queue dir: `/tmp/claude-webui` (Linux/macOS) or `%TEMP%\claude-webui` (Windows).
 | GET | `/multiview` | Machines page (multi-machine link panel) |
 | GET | `/api/sessions` | All sessions with transcript-derived state |
 | GET | `/api/session/<id>/transcript` | Parsed transcript entries |
+| GET | `/api/check-auto-allow` | Check session auto-allow rules (used by hook) |
 | GET | `/api/pending` | Pending permission requests |
 | GET | `/api/image?path=` | Serve uploaded images |
 | GET | `/api/multiview/remotes` | Registered remote machines for Machines |
