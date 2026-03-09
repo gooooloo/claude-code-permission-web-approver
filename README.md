@@ -131,6 +131,8 @@ Claude Code                          Web browser
 
 6. Run Claude Code — on Linux/macOS run it **inside tmux**; on Windows run it in **Windows Terminal**. The dashboard will show your sessions and let you interact.
 
+> **Windows limitation:** Prompt delivery uses `AttachConsole`/`WriteConsoleInputW`, which does not support Windows Terminal split panes. If you split a window into multiple panes, prompts may be delivered to the wrong pane or fail entirely. Use one Claude Code session per window (multiple windows are fine).
+
 ## Machines (multi-machine monitoring)
 
 Machines lets you monitor the same WebUI service running on multiple machines from a single page. Remote servers self-register with a central hub; the Machines page auto-discovers all machines and provides quick-open links.

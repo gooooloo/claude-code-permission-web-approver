@@ -131,6 +131,8 @@ Claude Code                          Web 浏览器
 
 6. 运行 Claude Code — Linux/macOS 在 **tmux 内** 运行，Windows 在 **Windows Terminal** 内运行。Dashboard 会自动显示你的会话。
 
+> **Windows 限制：** Prompt 投递使用 `AttachConsole`/`WriteConsoleInputW`，不支持 Windows Terminal 的 split pane。如果一个窗口被拆分成多个 pane，prompt 可能发送到错误的 pane 或直接失败。请每个窗口只运行一个 Claude Code 会话（多窗口没问题）。
+
 ## Machines（多机监控）
 
 Machines 让你在一个页面上访问多台机器上运行的同一个 WebUI 服务。远程服务器向中心 hub 自动注册，Machines 页面自动发现所有机器并提供快捷打开链接。
