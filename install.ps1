@@ -52,7 +52,9 @@ if (-not $Scope) {
 $DoProject = $Scope -eq "Project" -or $Scope -eq "All"
 $DoGlobal = $Scope -eq "Global" -or $Scope -eq "All"
 
-# Hook configuration using %USERPROFILE% so settings.json is portable
+# Hook configuration using resolved absolute path (Claude Code may not use cmd.exe,
+# so %USERPROFILE% env var expansion is not guaranteed)
+$HooksPath = Join-Path $HOME ".claude\hooks"
 $HooksConfig = @{
     PermissionRequest = @(
         @{
@@ -60,7 +62,7 @@ $HooksConfig = @{
             hooks = @(
                 @{
                     type = "command"
-                    command = 'python "%USERPROFILE%\.claude\hooks\permission-request.py"'
+                    command = "python `"$HooksPath\permission-request.py`""
                     timeout = 86400
                 }
             )
@@ -72,7 +74,7 @@ $HooksConfig = @{
             hooks = @(
                 @{
                     type = "command"
-                    command = 'python "%USERPROFILE%\.claude\hooks\session-start.py"'
+                    command = "python `"$HooksPath\session-start.py`""
                     timeout = 5
                 }
             )
@@ -84,7 +86,7 @@ $HooksConfig = @{
             hooks = @(
                 @{
                     type = "command"
-                    command = 'python "%USERPROFILE%\.claude\hooks\session-end.py"'
+                    command = "python `"$HooksPath\session-end.py`""
                     timeout = 5
                 }
             )
@@ -154,7 +156,7 @@ if ($DoGlobal) {
 }
 
 if ($DoProject) {
-    # Hook files are always needed — hook commands reference %USERPROFILE%\.claude\hooks\
+    # Hook files are always needed — hook commands reference ~/.claude/hooks/
     Install-HookFiles
     Install-Settings (Join-Path $ProjectDir ".claude\settings.json")
     Write-Host "WebUI hooks installed for: $ProjectDir"

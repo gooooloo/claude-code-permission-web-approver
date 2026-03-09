@@ -54,15 +54,17 @@ case "${1:-}" in
   *)         usage ;;
 esac
 
-# Use $HOME in commands so settings.json is portable (no hardcoded username/paths)
-HOOKS_CONFIG='{
+# Resolve $HOME at install time — Claude Code may not use a shell that expands env vars
+HOOKS_PATH="$HOME/.claude/hooks"
+HOOKS_CONFIG="$(cat <<EOFJSON
+{
   "PermissionRequest": [
     {
       "matcher": ".*",
       "hooks": [
         {
           "type": "command",
-          "command": "python3 \"$HOME/.claude/hooks/permission-request.py\"",
+          "command": "python3 \"$HOOKS_PATH/permission-request.py\"",
           "timeout": 86400
         }
       ]
@@ -74,7 +76,7 @@ HOOKS_CONFIG='{
       "hooks": [
         {
           "type": "command",
-          "command": "python3 \"$HOME/.claude/hooks/session-start.py\"",
+          "command": "python3 \"$HOOKS_PATH/session-start.py\"",
           "timeout": 5
         }
       ]
@@ -86,13 +88,15 @@ HOOKS_CONFIG='{
       "hooks": [
         {
           "type": "command",
-          "command": "python3 \"$HOME/.claude/hooks/session-end.py\"",
+          "command": "python3 \"$HOOKS_PATH/session-end.py\"",
           "timeout": 5
         }
       ]
     }
   ]
-}'
+}
+EOFJSON
+)"
 
 install_symlinks() {
   mkdir -p "$HOOKS_DIR"
