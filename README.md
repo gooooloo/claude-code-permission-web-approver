@@ -66,7 +66,7 @@ Claude Code (in tmux)                Web browser
 - **AskUserQuestion support** — answer Claude's questions with option selection or custom text
 - **Plan review** — approve, deny, or provide feedback on plans
 - **Image upload** — attach images in the prompt area
-- **MultiView** — centralized page to monitor the same service across multiple machines via DevTunnels
+- **DevTunnel Machines** — centralized page to monitor the same service across multiple machines via DevTunnels
 - **Feishu integration** — optional notification channel for mobile approval
 - **Graceful fallback** — hooks auto-approve when server is offline
 - **Auto-cleanup** — zombie sessions (dead PIDs) cleaned up automatically
@@ -109,9 +109,9 @@ Claude Code (in tmux)                Web browser
 
 6. Run Claude Code **inside tmux** — the dashboard will show your sessions and let you interact.
 
-## MultiView (multi-machine monitoring)
+## DevTunnel Machines (multi-machine monitoring)
 
-MultiView lets you monitor the same WebUI service running on multiple machines from a single page. Remote servers self-register with a central hub; the MultiView page auto-discovers all machines and provides quick-open links.
+DevTunnel Machines lets you monitor the same WebUI service running on multiple machines from a single page. Remote servers self-register with a central hub; the DevTunnel Machines page auto-discovers all machines and provides quick-open links.
 
 ### DevTunnels setup (one-time per machine)
 
@@ -151,7 +151,7 @@ The public URL will be `https://<random-id>-19836.asse.devtunnels.ms`. The `<ran
 > ```
 > Each port gets its own URL: `https://<random-id>-8080.asse.devtunnels.ms`, etc.
 
-### MultiView setup
+### DevTunnel Machines setup
 
 1. **Pick one machine as the hub** (the one you'll open in your browser):
    ```bash
