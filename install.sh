@@ -100,8 +100,8 @@ EOFJSON
 
 install_symlinks() {
   mkdir -p "$HOOKS_DIR"
-  # Also remove old .sh symlinks if they exist
-  for old_script in permission-request.sh post-tool-use.sh stop.sh user-prompt-submit.sh session-start.sh session-end.sh; do
+  # Also remove old symlinks from previous architectures
+  for old_script in permission-request.py session-start.py session-end.py permission-request.sh post-tool-use.sh stop.sh user-prompt-submit.sh session-start.sh session-end.sh; do
     [ -L "$HOOKS_DIR/$old_script" ] && rm -f "$HOOKS_DIR/$old_script"
   done
   for script in hook-permission-request.py hook-session-start.py hook-session-end.py; do

@@ -99,8 +99,9 @@ function Install-HookFiles {
         New-Item -ItemType Directory -Path $HooksDir -Force | Out-Null
     }
 
-    # Remove old .sh files if they exist
+    # Remove old files from previous architectures
     $oldScripts = @(
+        "permission-request.py", "session-start.py", "session-end.py",
         "permission-request.sh", "post-tool-use.sh", "stop.sh",
         "user-prompt-submit.sh", "session-start.sh", "session-end.sh"
     )
