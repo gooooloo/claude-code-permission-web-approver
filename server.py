@@ -339,8 +339,16 @@ def _is_session_alive(sid, session_data):
                 return is_process_alive(int(console_pid))
             except (ValueError, TypeError):
                 pass
-        # No console_pid yet — session may still be registering; keep alive
-        # for a grace period (60 seconds from registration)
+        # No console_pid (auto-discovered session) — check transcript mtime
+        transcript_path = session_data.get("transcript_path", "")
+        if transcript_path:
+            try:
+                mtime = os.path.getmtime(transcript_path)
+                if time.time() - mtime < 7200:  # active within last 2 hours
+                    return True
+            except OSError:
+                pass
+        # Grace period for sessions still registering
         registered_at = session_data.get("registered_at", 0)
         if time.time() - registered_at < 60:
             return True
@@ -816,10 +824,56 @@ class WebUIHandler(BaseHTTPRequestHandler):
             print(f"[!] Failed to update settings: {e}")
 
 
+def _scan_sessions_from_transcripts():
+    """Discover sessions by scanning ~/.claude/projects/ for recent transcript files.
+
+    Used on Windows where tmux is not available. Registers sessions as read-only
+    (no console_pid for prompt delivery) until the next hook fires.
+    """
+    home = os.path.expanduser("~")
+    projects_dir = os.path.join(home, ".claude", "projects")
+    if not os.path.isdir(projects_dir):
+        return
+
+    now = time.time()
+    for proj in os.listdir(projects_dir):
+        proj_path = os.path.join(projects_dir, proj)
+        if not os.path.isdir(proj_path):
+            continue
+        for jsonl_file in glob.glob(os.path.join(proj_path, "*.jsonl")):
+            try:
+                mtime = os.path.getmtime(jsonl_file)
+            except OSError:
+                continue
+            # Only consider transcripts modified in last 2 hours
+            if now - mtime > 7200:
+                continue
+
+            session_id = os.path.splitext(os.path.basename(jsonl_file))[0]
+            with sessions_lock:
+                if session_id in sessions:
+                    continue
+                sessions[session_id] = {
+                    "transcript_path": jsonl_file,
+                    "tmux_pane": "",
+                    "tmux_socket": "",
+                    "console_pid": "",
+                    "cwd": proj_path,
+                    "registered_at": now,
+                    "transcript_offset": 0,
+                    "transcript_entries": [],
+                    "derived_state": "busy",
+                    "last_activity": now,
+                    "last_summary": "",
+                    "last_user_prompt": "",
+                }
+            print(f"[*] Auto-discovered session: {session_id} project={proj}")
+
+
 def scan_existing_sessions():
     """Scan tmux panes for running claude processes and register them."""
     if IS_WINDOWS:
-        # Tmux is not available on Windows; sessions will register via hooks
+        _scan_sessions_from_transcripts()
         return
 
     # Find all tmux sockets
