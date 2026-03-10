@@ -154,13 +154,15 @@ def encode_project_path(path):
     """Encode project path for Claude Code ~/.claude/projects/ directory naming.
 
     Linux:   /home/user/proj   -> -home-user-proj
-    Windows: C:\\Users\\foo\\proj -> C--Users-foo-proj  (colon becomes dash)
+    Windows: C:\\Users\\foo\\proj -> C-Users-foo-proj
     """
     if IS_WINDOWS:
-        # Normalize to forward slashes, replace colon with dash (C: -> C-)
+        # Normalize to forward slashes first, then remove drive colon
         path = path.replace("\\", "/")
-        path = path.replace(":", "-")
+        path = path.replace(":", "")
         encoded = path.replace("/", "-")
+        if not encoded.startswith("-"):
+            encoded = "-" + encoded
         return encoded
     else:
         encoded = path.replace("/", "-")
