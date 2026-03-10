@@ -930,6 +930,7 @@ function openSession(sid) {
   document.getElementById('permCards').innerHTML = '';
   lastPermCardId = '';
   lastTranscriptHash = '';
+  scrollToBottomOnNextRender = true;
   fetchSessionDetail();
   startDetailPolling();
 }
@@ -951,6 +952,7 @@ function showDashboard() {
 }
 
 let detailPollTimer = null;
+let scrollToBottomOnNextRender = false;
 function startDetailPolling() {
   stopDetailPolling();
   detailPollTimer = setInterval(fetchSessionDetail, 1000);
@@ -1248,8 +1250,11 @@ function renderTranscript(entries) {
     }
   });
   el.innerHTML = html || '<div style="color:#555;text-align:center;padding:40px">No transcript entries</div>';
-  // Only auto-scroll if user was already at the bottom
-  if (wasAtBottom) window.scrollTo(0, document.documentElement.scrollHeight);
+  // Auto-scroll: on first render after entering detail view, or if user was already at bottom
+  if (scrollToBottomOnNextRender || wasAtBottom) {
+    window.scrollTo(0, document.documentElement.scrollHeight);
+    scrollToBottomOnNextRender = false;
+  }
 }
 
 // ── Actions ──
