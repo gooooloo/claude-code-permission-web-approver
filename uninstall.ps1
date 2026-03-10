@@ -65,8 +65,9 @@ function Remove-HookFiles {
         }
     }
 
-    # Also clean up old .sh files from previous architecture
+    # Also clean up old files from previous architectures
     $oldScripts = @(
+        "permission-request.py", "session-start.py", "session-end.py",
         "permission-request.sh", "post-tool-use.sh", "stop.sh",
         "user-prompt-submit.sh", "session-start.sh", "session-end.sh"
     )
