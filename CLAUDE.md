@@ -25,7 +25,6 @@ A web UI for Claude Code that replaces default terminal prompts with a browser-b
 - **platform_utils.py** — Cross-platform utilities. OS detection, temp directory paths, process tree walking (via `/proc` on Linux, `CreateToolhelp32Snapshot` on Windows), path encoding.
 - **win_send_keys.py** — Windows console input helper. Attaches to a target process's console via `AttachConsole` and injects keyboard input via `WriteConsoleInputW`. Runs as a subprocess to avoid disrupting the server's console.
 - **channel_feishu.py** — Optional Feishu notification channel. Polls `/api/sessions` for state changes, sends permission cards and idle cards. Prompt delivery via `/api/send-prompt`. Also manages Feishu topic naming (first user prompt), message routing by thread_id, and session pinning/unpinning.
-- **channel_teams.py** — Optional Microsoft Teams notification channel. Two modes: webhook (notification-only via Incoming Webhook) and graph (bidirectional via Microsoft Graph API with OAuth2 client_credentials). Sends Adaptive Cards for permission requests, syncs transcript entries, receives user decisions and prompts.
 - **install.sh** — Linux/macOS installer. Creates symlinks and merges hook config into settings.json. Requires `--project`, `--global`, or `--all`. Depends on `jq`.
 - **install.ps1** — Windows installer (PowerShell). Copies hook files and merges hook config into settings.json. Accepts `-Scope Project|Global|All`.
 - **uninstall.sh** — Linux/macOS uninstaller. Reverses install.sh. Depends on `jq`.

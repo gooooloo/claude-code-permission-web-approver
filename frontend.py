@@ -297,6 +297,13 @@ HTML_PAGE = """<!DOCTYPE html>
     border-left: 3px solid #f97316;
     font-size: 12px;
   }
+  .msg-system {
+    background: #1a1a2e;
+    border-left: 3px solid #6b7280;
+    font-size: 12px;
+    text-align: center;
+  }
+  .msg-system .msg-label { color: #6b7280; }
   .msg-label {
     font-size: 11px;
     font-weight: 700;
@@ -1412,6 +1419,12 @@ function renderTranscript(entries) {
       }
       if (!text.trim()) return;
       html += '<div class="msg msg-user"><div class="msg-label">You</div><div class="msg-content">' + esc(text) + '</div></div>';
+    } else if (e.type === 'system' && e.subtype === 'compact_boundary') {
+      const meta = e.compactMetadata || {};
+      const tokens = meta.preTokens ? (meta.preTokens / 1000).toFixed(0) + 'k tokens' : '';
+      const trigger = meta.trigger === 'auto' ? 'auto' : (meta.trigger || '');
+      const detail = [trigger, tokens].filter(Boolean).join(', ');
+      html += '<div class="msg msg-system"><div class="msg-label">SYSTEM</div><div class="msg-content">Context compacted' + (detail ? ' (' + esc(detail) + ')' : '') + '</div></div>';
     } else if (e.type === 'assistant') {
       const msg = e.message || {};
       const content = msg.content || [];

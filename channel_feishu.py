@@ -437,6 +437,15 @@ def _format_transcript_entry(entry):
     content = msg.get("content", "")
     results = []
 
+    if etype == "system" and entry.get("subtype") == "compact_boundary":
+        meta = entry.get("compactMetadata", {})
+        tokens = f"{meta['preTokens'] // 1000}k tokens" if meta.get("preTokens") else ""
+        trigger = meta.get("trigger", "")
+        detail = ", ".join(filter(None, [trigger, tokens]))
+        label = "Context compacted" + (f" ({detail})" if detail else "")
+        results.append((f"[System] {label}", None))
+        return results
+
     if etype == "user":
         # Extract user text
         text = ""
