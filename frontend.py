@@ -307,6 +307,56 @@ HTML_PAGE = """<!DOCTYPE html>
     font-weight: 600;
   }
 
+  /* ── Multi-select mode ── */
+  .msg.selectable { cursor: pointer; user-select: none; }
+  .msg.selected { outline: 2px solid #a78bfa; outline-offset: -2px; }
+  .multiselect-bar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 200;
+    background: #2a2a4a;
+    border-bottom: 2px solid #a78bfa;
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+    color: #e0e0e0;
+  }
+  .multiselect-bar button {
+    background: #a78bfa;
+    color: #1a1a2e;
+    border: none;
+    padding: 6px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .multiselect-bar button:hover { background: #c4b5fd; }
+  .multiselect-bar button.cancel-btn {
+    background: #4a4a6a;
+    color: #e0e0e0;
+  }
+  .multiselect-bar button.cancel-btn:hover { background: #5a5a7a; }
+  .toast {
+    position: fixed;
+    bottom: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #22c55e;
+    color: #fff;
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    z-index: 300;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+
   /* ── Permission card in detail view ── */
   .perm-card {
     background: #16213e;
@@ -635,6 +685,12 @@ HTML_PAGE = """<!DOCTYPE html>
 </div>
 
 <!-- Session detail view -->
+<div class="multiselect-bar" id="multiSelectBar" style="display:none">
+  <span id="multiSelectCount">0 selected</span>
+  <button onclick="copySelected()">Copy</button>
+  <button class="cancel-btn" onclick="exitMultiSelect()">Cancel</button>
+</div>
+<div class="toast" id="toast"></div>
 <div class="session-detail" id="detailView">
   <div class="container">
     <div id="permCards"></div>
@@ -674,6 +730,11 @@ let lastTranscriptHash = '';
 // Question state
 const questionSelections = {};
 const questionMultiSelect = {};
+
+// Multi-select state
+let multiSelectMode = false;
+let selectedMsgIndices = new Set();
+let transcriptEntriesCache = [];
 
 function titlePrefix() { return serverName !== 'local' ? serverName + ' \\u2014 ' : ''; }
 
@@ -936,6 +997,7 @@ function openSession(sid) {
 }
 
 function showDashboard() {
+  exitMultiSelect();
   currentSessionId = null;
   currentView = 'dashboard';
   location.hash = '';
@@ -1203,7 +1265,8 @@ function renderTranscript(entries) {
   lastTranscriptHash = tHash;
   const docEl = document.documentElement;
   const wasAtBottom = docEl.scrollHeight - docEl.scrollTop - docEl.clientHeight < 80;
-  let html = '';
+  // Build flat list of rendered items with metadata for copy
+  let items = [];
   entries.forEach(e => {
     if (e.type === 'user') {
       const content = e.message && e.message.content;
@@ -1218,13 +1281,14 @@ function renderTranscript(entries) {
         });
       }
       if (!text.trim()) return;
-      html += '<div class="msg msg-user"><div class="msg-label">You</div><div class="msg-content">' + esc(text) + '</div></div>';
+      items.push({ label: 'You', cls: 'msg-user', html: esc(text), copyLabel: 'User', copyText: text.trim() });
     } else if (e.type === 'system' && e.subtype === 'compact_boundary') {
       const meta = e.compactMetadata || {};
       const tokens = meta.preTokens ? (meta.preTokens / 1000).toFixed(0) + 'k tokens' : '';
       const trigger = meta.trigger === 'auto' ? 'auto' : (meta.trigger || '');
       const detail = [trigger, tokens].filter(Boolean).join(', ');
-      html += '<div class="msg msg-system"><div class="msg-label">SYSTEM</div><div class="msg-content">Context compacted' + (detail ? ' (' + esc(detail) + ')' : '') + '</div></div>';
+      const text = 'Context compacted' + (detail ? ' (' + detail + ')' : '');
+      items.push({ label: 'SYSTEM', cls: 'msg-system', html: esc(text), copyLabel: 'System', copyText: text });
     } else if (e.type === 'assistant') {
       const msg = e.message || {};
       const content = msg.content || [];
@@ -1237,7 +1301,7 @@ function renderTranscript(entries) {
         }
       });
       if (text.trim()) {
-        html += '<div class="msg msg-assistant"><div class="msg-label">Claude</div><div class="msg-content">' + renderMarkdown(text) + '</div></div>';
+        items.push({ label: 'Claude', cls: 'msg-assistant', html: renderMarkdown(text), copyLabel: 'Assistant', copyText: text.trim() });
       }
       tools.forEach(t => {
         let detail = '';
@@ -1245,16 +1309,94 @@ function renderTranscript(entries) {
         else if (t.name === 'Write' || t.name === 'Edit' || t.name === 'mcp__acp__Write' || t.name === 'mcp__acp__Edit') detail = (t.input && t.input.file_path) || '';
         else if (t.name === 'Read') detail = (t.input && t.input.file_path) || '';
         else detail = JSON.stringify(t.input || {}).substring(0, 200);
-        html += '<div class="msg msg-tool"><div class="msg-label">' + esc(t.name) + '</div><div class="msg-content">' + esc(detail) + '</div></div>';
+        items.push({ label: t.name, cls: 'msg-tool', html: esc(detail), copyLabel: 'Tool(' + t.name + ')', copyText: detail });
       });
     }
   });
+  transcriptEntriesCache = items;
+  // Clean up selections that are out of range
+  selectedMsgIndices.forEach(i => { if (i >= items.length) selectedMsgIndices.delete(i); });
+  let html = '';
+  const selCls = multiSelectMode ? ' selectable' : '';
+  items.forEach((item, idx) => {
+    const sel = selectedMsgIndices.has(idx) ? ' selected' : '';
+    html += '<div class="msg ' + item.cls + selCls + sel + '" data-idx="' + idx + '" onclick="onMsgClick(event,' + idx + ')"><div class="msg-label">' + item.label + '</div><div class="msg-content">' + item.html + '</div></div>';
+  });
   el.innerHTML = html || '<div style="color:#555;text-align:center;padding:40px">No transcript entries</div>';
-  // Auto-scroll: on first render after entering detail view, or if user was already at bottom
   if (scrollToBottomOnNextRender || wasAtBottom) {
     window.scrollTo(0, document.documentElement.scrollHeight);
     scrollToBottomOnNextRender = false;
   }
+}
+
+// ── Multi-select ──
+
+function onMsgClick(event, idx) {
+  // Don't trigger on link clicks or button clicks inside messages
+  if (event.target.closest('a, button')) return;
+  if (!multiSelectMode) {
+    enterMultiSelect(idx);
+  } else {
+    toggleSelect(idx);
+  }
+}
+
+function enterMultiSelect(idx) {
+  multiSelectMode = true;
+  selectedMsgIndices.clear();
+  selectedMsgIndices.add(idx);
+  document.getElementById('multiSelectBar').style.display = 'flex';
+  updateMultiSelectUI();
+}
+
+function exitMultiSelect() {
+  multiSelectMode = false;
+  selectedMsgIndices.clear();
+  document.getElementById('multiSelectBar').style.display = 'none';
+  // Remove selectable/selected classes
+  document.querySelectorAll('#transcriptView .msg').forEach(el => {
+    el.classList.remove('selectable', 'selected');
+  });
+}
+
+function toggleSelect(idx) {
+  if (selectedMsgIndices.has(idx)) selectedMsgIndices.delete(idx);
+  else selectedMsgIndices.add(idx);
+  if (selectedMsgIndices.size === 0) { exitMultiSelect(); return; }
+  updateMultiSelectUI();
+}
+
+function updateMultiSelectUI() {
+  document.getElementById('multiSelectCount').textContent = selectedMsgIndices.size + ' selected';
+  document.querySelectorAll('#transcriptView .msg').forEach(el => {
+    const idx = parseInt(el.dataset.idx);
+    el.classList.add('selectable');
+    if (selectedMsgIndices.has(idx)) el.classList.add('selected');
+    else el.classList.remove('selected');
+  });
+}
+
+function copySelected() {
+  const indices = Array.from(selectedMsgIndices).sort((a, b) => a - b);
+  const parts = indices.map(i => {
+    const item = transcriptEntriesCache[i];
+    if (!item) return '';
+    return item.copyLabel + ':\\n' + item.copyText;
+  }).filter(Boolean);
+  const text = parts.join('\\n\\n');
+  navigator.clipboard.writeText(text).then(() => {
+    showToast('Copied ' + indices.length + ' items');
+    exitMultiSelect();
+  }).catch(() => {
+    showToast('Copy failed');
+  });
+}
+
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2000);
 }
 
 // ── Actions ──
