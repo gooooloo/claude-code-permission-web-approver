@@ -91,8 +91,8 @@ remove_symlinks() {
       removed=$((removed + 1))
     fi
   done
-  # Also clean up old .sh symlinks from previous architecture
-  for script in permission-request.sh post-tool-use.sh stop.sh user-prompt-submit.sh session-start.sh session-end.sh; do
+  # Also clean up old symlinks from previous architectures
+  for script in permission-request.py session-start.py session-end.py permission-request.sh post-tool-use.sh stop.sh user-prompt-submit.sh session-start.sh session-end.sh; do
     if [ -L "$HOOKS_DIR/$script" ]; then
       rm -f "$HOOKS_DIR/$script"
       removed=$((removed + 1))
