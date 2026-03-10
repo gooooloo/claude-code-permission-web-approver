@@ -1127,7 +1127,7 @@ function openSession(sid) {
   document.getElementById('backBtn').style.display = 'flex';
   document.getElementById('scrollBottomBtn').style.display = 'flex';
   document.getElementById('collapseAllBtn').style.display = 'none';
-  document.getElementById('pageTitle').textContent = 'Session ' + sid;
+  document.getElementById('pageTitle').textContent = ((federationLocalName && federationLocalName !== 'local') ? federationLocalName + ' — ' : '') + 'Session ' + sid;
   document.getElementById('transcriptView').innerHTML = '';
   document.getElementById('permCards').innerHTML = '';
   lastPermCardId = '';
@@ -1145,7 +1145,7 @@ function showDashboard() {
   document.getElementById('backBtn').style.display = 'none';
   document.getElementById('scrollBottomBtn').style.display = 'none';
   document.getElementById('collapseAllBtn').style.display = 'flex';
-  document.getElementById('pageTitle').textContent = 'Claude Sessions';
+  document.getElementById('pageTitle').textContent = (federationLocalName && federationLocalName !== 'local') ? federationLocalName + ' — Claude Sessions' : 'Claude Sessions';
   document.getElementById('pageTitle').style.color = '#a78bfa';
   stopDetailPolling();
   lastDashboardHash = '';
@@ -1177,7 +1177,7 @@ async function fetchSessionDetail() {
     const titleEl = document.getElementById('pageTitle');
     const stateColor = {idle: '#4ade80', busy: '#facc15', permission_prompt: '#f87171', elicitation: '#60a5fa', plan_review: '#c084fc'}[state] || '#a78bfa';
     const stateWord = {idle: 'Idle', busy: 'Busy', permission_prompt: 'Ask', elicitation: 'Ask', plan_review: 'Plan'}[state] || '';
-    titleEl.textContent = currentSessionId + ' ' + stateWord;
+    titleEl.textContent = ((federationLocalName && federationLocalName !== 'local') ? federationLocalName + ' — ' : '') + currentSessionId + ' ' + stateWord;
     titleEl.style.color = stateColor;
 
     // Render permission card if applicable
