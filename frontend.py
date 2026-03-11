@@ -716,6 +716,7 @@ HTML_PAGE = """<!DOCTYPE html>
   }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script>if(typeof html2canvas==='undefined'){var s=document.createElement('script');s.src='https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js';document.head.appendChild(s);}</script>
 </head>
 <body>
 <div class="header">
@@ -1515,6 +1516,11 @@ function exportSelectedHTML() {
 }
 
 function renderSelectedToPNGCanvas(callback) {
+  if (typeof html2canvas === 'undefined') {
+    showToast('html2canvas not loaded — check network or try again', true);
+    callback(new Error('html2canvas not loaded'), null, 0);
+    return;
+  }
   const indices = Array.from(selectedMsgIndices).sort((a, b) => a - b);
   if (!indices.length) return;
   const msgs = indices.map(i => {
@@ -1523,7 +1529,7 @@ function renderSelectedToPNGCanvas(callback) {
     return '<div class="msg ' + item.cls + '"><div class="msg-label">' + esc(item.label) + '</div><div class="msg-content">' + item.html + '</div></div>';
   }).filter(Boolean);
   const container = document.createElement('div');
-  container.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;background:#1a1a2e;padding:24px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;color:#e0e0e0;z-index:-1;';
+  container.style.cssText = 'position:absolute;left:-9999px;top:0;width:800px;background:#1a1a2e;padding:24px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;color:#e0e0e0;';
   const style = document.createElement('style');
   style.textContent =
     '.png-export .msg { margin-bottom:12px;padding:12px 16px;border-radius:10px;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word; }' +
@@ -1561,10 +1567,24 @@ function renderSelectedToPNGCanvas(callback) {
   container.appendChild(inner);
   document.body.appendChild(container);
   showToast('Generating PNG...');
-  html2canvas(container, { backgroundColor: '#1a1a2e', scale: 2, useCORS: true }).then(canvas => {
+  var done = false;
+  var timer = setTimeout(function() {
+    if (done) return;
+    done = true;
+    try { document.body.removeChild(container); } catch(e) {}
+    showToast('PNG generation timed out — try selecting fewer messages', true);
+    callback(new Error('timeout'), null, indices.length);
+  }, 30000);
+  html2canvas(container, { backgroundColor: '#1a1a2e', scale: 2, useCORS: true, logging: false }).then(canvas => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
     document.body.removeChild(container);
     callback(null, canvas, indices.length);
   }).catch(err => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
     document.body.removeChild(container);
     callback(err, null, indices.length);
   });
