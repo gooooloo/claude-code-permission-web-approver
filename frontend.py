@@ -945,7 +945,7 @@ function buildCardHTML(s) {
   }
   if (state === 'idle' && s.prompt_capable !== false) {
     html += '<div class="sc-prompt-row" onclick="event.stopPropagation()">';
-    html += '<input class="sc-prompt-input" id="dashPrompt-' + esc(s.session_id) + '" placeholder="Send a prompt..." onkeydown="if((event.ctrlKey||event.metaKey)&&event.key===\\'Enter\\'){event.preventDefault();sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')}">';
+    html += '<input class="sc-prompt-input" id="dashPrompt-' + esc(s.session_id) + '" placeholder="Send a prompt..." onkeydown="if(event.key===\\'Enter\\'&&!event.shiftKey){event.preventDefault();sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')}">';
     html += '<button class="sc-prompt-send" onclick="sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')">Send</button>';
     html += '</div>';
     html += '<div class="sc-shortcut-row" onclick="event.stopPropagation()">';
@@ -1909,9 +1909,9 @@ function renderImagePreviews() {
   ).join('');
 }
 
-// Ctrl+Enter to send
+// Enter to send, Shift+Enter for newline
 document.getElementById('promptInput').addEventListener('keydown', function(e) {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+  if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendPrompt();
   }
