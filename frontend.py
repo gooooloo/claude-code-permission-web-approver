@@ -118,8 +118,7 @@ HTML_PAGE = """<!DOCTYPE html>
     transition: transform 0.2s;
   }
   .sc-collapse-btn:hover { color: #a78bfa; }
-  .sc-collapse-btn { margin-left: -8px; }
-  .sc-project + .sc-collapse-btn { margin-left: auto; }
+  .sc-collapse-btn { margin-right: 2px; margin-left: -4px; }
   .session-card.collapsed .sc-collapse-btn { transform: rotate(-90deg); }
   .session-card.collapsed .sc-body { display: none; }
   .sc-sid-row {
@@ -926,10 +925,10 @@ function buildCardHTML(s) {
   const userPrompt = esc(s.last_user_prompt || '');
   const time = s.last_activity ? new Date(s.last_activity * 1000).toLocaleTimeString() : '';
   let html = '<div class="sc-top">';
+  html += '<button class="sc-collapse-btn" onclick="event.stopPropagation();toggleCollapse(\\'' + esc(s.session_id) + '\\',this)" title="Collapse/Expand">&#9660;</button>';
   html += '<span class="state-badge badge-' + state + '" style="cursor:pointer" onclick="event.stopPropagation();openSession(\\'' + esc(s.session_id) + '\\')">' + stateLabel(state) + '</span>';
   html += '<span class="sc-project">' + esc(project) + '</span>';
   if (time) html += '<span class="sc-time">' + time + '</span>';
-  html += '<button class="sc-collapse-btn" onclick="event.stopPropagation();toggleCollapse(\\'' + esc(s.session_id) + '\\',this)" title="Collapse/Expand">&#9660;</button>';
   html += '</div>';
   html += '<div class="sc-body">';
   html += '<div class="sc-sid-row"><span class="sc-sid" style="cursor:pointer" onclick="event.stopPropagation();openSession(\\'' + esc(s.session_id) + '\\')">' + esc(s.session_id) + '</span></div>';
