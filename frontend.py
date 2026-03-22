@@ -12,7 +12,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
     background: #1a1a2e;
     color: #e0e0e0;
     min-height: 100vh;
@@ -422,7 +422,7 @@ HTML_PAGE = """<!DOCTYPE html>
     cursor: pointer;
     transition: all 0.15s;
     font-size: 13px;
-    font-family: monospace;
+    font-family: 'SF Mono', Menlo, Consolas, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', monospace;
   }
   .path-option:hover { border-color: #f59e0b55; background: #16213e; }
   .path-option .path-label { color: #f59e0b; font-weight: 600; }
@@ -483,7 +483,7 @@ HTML_PAGE = """<!DOCTYPE html>
     color: #e0e0e0;
     padding: 10px 12px;
     font-size: 16px;
-    font-family: monospace;
+    font-family: 'SF Mono', Menlo, Consolas, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', monospace;
     line-height: 1.5;
     resize: vertical;
     min-height: 60px;
@@ -499,7 +499,7 @@ HTML_PAGE = """<!DOCTYPE html>
     color: #e0e0e0;
     padding: 10px 12px;
     font-size: 16px;
-    font-family: monospace;
+    font-family: 'SF Mono', Menlo, Consolas, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', monospace;
     line-height: 1.5;
     resize: vertical;
     min-height: 60px;
@@ -567,7 +567,7 @@ HTML_PAGE = """<!DOCTYPE html>
     color: #e0e0e0;
     padding: 10px 12px;
     font-size: 16px;
-    font-family: monospace;
+    font-family: 'SF Mono', Menlo, Consolas, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', monospace;
     line-height: 1.5;
     resize: none;
     min-height: 44px;
@@ -1471,7 +1471,7 @@ function exportSelectedHTML() {
   }).filter(Boolean);
   const html = '<!DOCTYPE html>\\n<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Claude Transcript</title>\\n<style>\\n' +
     '* { margin: 0; padding: 0; box-sizing: border-box; }\\n' +
-    'body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; background: #1a1a2e; color: #e0e0e0; padding: 24px; }\\n' +
+    'body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 24px; }\\n' +
     '.msg { margin-bottom: 12px; padding: 12px 16px; border-radius: 10px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }\\n' +
     '.msg-user { background: #1e3a5f; border-left: 3px solid #3b82f6; }\\n' +
     '.msg-assistant { background: #1a2744; border-left: 3px solid #a78bfa; }\\n' +
@@ -1529,10 +1529,10 @@ function renderSelectedToPNGCanvas(callback) {
     return '<div class="msg ' + item.cls + '"><div class="msg-label">' + esc(item.label) + '</div><div class="msg-content">' + item.html + '</div></div>';
   }).filter(Boolean);
   const container = document.createElement('div');
-  container.style.cssText = 'position:absolute;left:-9999px;top:0;width:800px;background:#1a1a2e;padding:24px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;color:#e0e0e0;';
+  container.style.cssText = 'position:absolute;left:-9999px;top:0;width:800px;background:#1a1a2e;padding:24px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;color:#e0e0e0;';
   const style = document.createElement('style');
   style.textContent =
-    '.png-export .msg { margin-bottom:12px;padding:12px 16px;border-radius:10px;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word; }' +
+    '.png-export .msg { margin-bottom:12px;padding:12px 16px;border-radius:10px;font-size:13px;line-height:1.6;white-space:normal;overflow-wrap:break-word; }' +
     '.png-export .msg-user { background:#1e3a5f;border-left:3px solid #3b82f6; }' +
     '.png-export .msg-assistant { background:#1a2744;border-left:3px solid #a78bfa; }' +
     '.png-export .msg-tool { background:#0f0f23;border-left:3px solid #f97316;font-size:12px; }' +
