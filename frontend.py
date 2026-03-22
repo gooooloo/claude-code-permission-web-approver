@@ -754,6 +754,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <div id="permCards"></div>
     <div class="transcript-view" id="transcriptView"></div>
   </div>
+  <div id="noPromptMsg" style="display:none;padding:12px 16px;color:#888;font-size:13px;font-style:italic;text-align:center;border-top:1px solid #333">Read-only session: prompt input will be available after the session hook registers a terminal</div>
   <div class="prompt-area" id="promptArea">
     <div class="prompt-row">
       <textarea class="prompt-input" id="promptInput" placeholder="Type a prompt... Ctrl+Enter to send" rows="1" oninput="autoResize(this)"></textarea>
@@ -954,7 +955,9 @@ function buildCardHTML(s) {
     html += ' <button class="btn-deny-sm" onclick="respond(\\'' + esc(pr.id) + '\\',\\'deny\\',this)">Deny</button>';
     html += '</div>';
   }
-  if (s.prompt_capable !== false) {
+  if (s.prompt_capable === false) {
+    html += '<div class="sc-no-prompt" onclick="event.stopPropagation()" style="padding:6px 10px;color:#888;font-size:12px;font-style:italic">Read-only: waiting for session hook to register terminal</div>';
+  } else {
     var disabled = state !== 'idle';
     html += '<div class="sc-prompt-row" onclick="event.stopPropagation()">';
     html += '<textarea class="sc-prompt-input" id="dashPrompt-' + esc(s.session_id) + '" placeholder="' + (disabled ? 'Waiting...' : 'Type a prompt... Ctrl+Enter to send') + '" rows="1"' + (disabled ? ' disabled' : '') + ' oninput="this.style.height=\\'auto\\';this.style.height=this.scrollHeight+\\'px\\'" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key===\\'Enter\\'){event.preventDefault();sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')}"></textarea>';
@@ -1140,9 +1143,18 @@ async function fetchSessionDetail() {
     titleEl.textContent = titlePrefix() + currentSessionId + ' ' + stateWord;
     titleEl.style.color = stateColor;
 
-    // Hide prompt area if session cannot receive prompts
+    // Show read-only message or prompt area depending on prompt capability
     const promptArea = document.getElementById('promptArea');
-    if (promptArea) promptArea.style.display = session.prompt_capable === false ? 'none' : '';
+    const noPromptMsg = document.getElementById('noPromptMsg');
+    if (promptArea && noPromptMsg) {
+      if (session.prompt_capable === false) {
+        promptArea.style.display = 'none';
+        noPromptMsg.style.display = '';
+      } else {
+        promptArea.style.display = '';
+        noPromptMsg.style.display = 'none';
+      }
+    }
 
     // Disable prompt input when not idle, auto-focus when becoming idle
     const pi = document.getElementById('promptInput');
