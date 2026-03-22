@@ -25,9 +25,11 @@ A web UI for Claude Code that replaces default terminal prompts with a browser-b
 - **platform_utils.py** — Cross-platform utilities. OS detection, temp directory paths, process tree walking (via `/proc` on Linux, `CreateToolhelp32Snapshot` on Windows), path encoding.
 - **win_send_keys.py** — Windows console input helper. Attaches to a target process's console via `AttachConsole` and injects keyboard input via `WriteConsoleInputW`. Runs as a subprocess to avoid disrupting the server's console.
 - **channel_feishu.py** — Optional Feishu notification channel. Polls `/api/sessions` for state changes, sends permission cards and idle cards. Prompt delivery via `/api/send-prompt`. Also manages Feishu topic naming (first user prompt), message routing by thread_id, and session pinning/unpinning.
-- **install.sh** — Linux/macOS installer. Creates symlinks and merges hook config into settings.json. Requires `--project`, `--global`, or `--all`. Depends on `jq`.
+- **install.sh** — Linux/macOS installer. Creates symlinks and merges hook config into settings.json. Flags: `--project`, `--global`, `--daemon`. Depends on `jq`. `--daemon` installs systemd services (Linux only).
+- **claude-webui-linux.service** — Systemd unit for server.py (auto-start, crash restart).
+- **claude-webui-watcher-linux.service** — Systemd unit that watches `.py` files and restarts the server on changes.
 - **install.ps1** — Windows installer (PowerShell). Copies hook files and merges hook config into settings.json. Accepts `-Scope Project|Global|All`.
-- **uninstall.sh** — Linux/macOS uninstaller. Reverses install.sh. Depends on `jq`.
+- **uninstall.sh** — Linux/macOS uninstaller. Reverses install.sh. Flags: `--project`, `--global`, `--daemon`. Depends on `jq`.
 - **uninstall.ps1** — Windows uninstaller (PowerShell). Reverses install.ps1.
 - **dev.sh** — Development helper. Uses `entr` to auto-restart `server.py` when `frontend.py`, `server.py`, or `channel_feishu.py` changes.
 
@@ -43,7 +45,8 @@ python3 server.py --lan    # bind 0.0.0.0 for LAN access
 # Install hooks — Linux/macOS
 /path/to/install.sh --project   # Project-level only
 /path/to/install.sh --global    # Global (~/.claude) + symlinks
-/path/to/install.sh --all       # Both project + global
+/path/to/install.sh --daemon    # Install systemd service (Linux only)
+/path/to/install.sh --global --daemon  # Combine flags
 
 # Install hooks — Windows (PowerShell)
 .\install.ps1 -Scope Project
@@ -53,7 +56,7 @@ python3 server.py --lan    # bind 0.0.0.0 for LAN access
 # Uninstall hooks — Linux/macOS
 /path/to/uninstall.sh --project
 /path/to/uninstall.sh --global
-/path/to/uninstall.sh --all
+/path/to/uninstall.sh --daemon
 
 # Uninstall hooks — Windows (PowerShell)
 .\uninstall.ps1 -Scope Project
@@ -63,7 +66,7 @@ python3 server.py --lan    # bind 0.0.0.0 for LAN access
 
 No build step, no test suite, no linter.
 
-**Linux/macOS deps:** Python 3, `jq` (install/uninstall scripts), Bash (install scripts). Optional: `entr` (dev.sh).
+**Linux/macOS deps:** Python 3, `jq` (install/uninstall scripts), Bash (install scripts). Optional: `entr` (dev.sh), `inotify-tools` (--daemon).
 
 **Windows deps:** Python 3, PowerShell 5.1+ (install/uninstall scripts). No additional tools required.
 

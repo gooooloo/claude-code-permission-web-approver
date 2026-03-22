@@ -7,9 +7,9 @@
 # Scopes:
 #   --project  Install hooks into <cwd>/.claude/settings.json (project-level only)
 #   --global   Install hooks into ~/.claude/settings.json + create symlinks in ~/.claude/hooks/
-#   --all      Do both --project and --global
+#   --daemon   Install systemd service for auto-start (Linux only)
 #
-# Usage: /path/to/install.sh --project|--global|--all
+# Usage: /path/to/install.sh --project|--global|--daemon [--daemon]
 # Deps:  jq (for settings.json manipulation only)
 
 set -e
@@ -19,11 +19,13 @@ PROJECT_DIR="$(pwd)"
 HOOKS_DIR="$HOME/.claude/hooks"
 
 usage() {
-  echo "Usage: $0 --project|--global|--all"
+  echo "Usage: $0 --project|--global|--daemon [--daemon]"
   echo ""
   echo "  --project  Install hooks into <cwd>/.claude/settings.json"
   echo "  --global   Install hooks into ~/.claude/settings.json + symlinks"
-  echo "  --all      Install both project and global"
+  echo "  --daemon   Install systemd service for auto-start (Linux only)"
+  echo ""
+  echo "Flags can be combined: $0 --global --daemon"
   exit 1
 }
 
@@ -31,28 +33,40 @@ prompt_scope() {
   echo "Select install scope:"
   echo "  1) project  — Install hooks into <cwd>/.claude/settings.json"
   echo "  2) global   — Install hooks into ~/.claude/settings.json + symlinks"
-  echo "  3) all      — Install both project and global"
+  echo "  3) daemon   — Install systemd service for auto-start (Linux only)"
   echo ""
-  printf "Enter choice [1-3]: "
-  read -r choice
-  case "$choice" in
-    1) DO_PROJECT=true ;;
-    2) DO_GLOBAL=true ;;
-    3) DO_PROJECT=true; DO_GLOBAL=true ;;
-    *) echo "Invalid choice"; exit 1 ;;
-  esac
+  echo "Enter choices separated by space (e.g. '1 3' or '2'):"
+  printf "> "
+  read -r choices
+  for c in $choices; do
+    case "$c" in
+      1) DO_PROJECT=true ;;
+      2) DO_GLOBAL=true ;;
+      3) DO_DAEMON=true ;;
+      *) echo "Invalid choice: $c"; exit 1 ;;
+    esac
+  done
+  if [ "$DO_PROJECT" = false ] && [ "$DO_GLOBAL" = false ] && [ "$DO_DAEMON" = false ]; then
+    echo "No scope selected"; exit 1
+  fi
 }
 
 DO_PROJECT=false
 DO_GLOBAL=false
+DO_DAEMON=false
 
-case "${1:-}" in
-  --project) DO_PROJECT=true ;;
-  --global)  DO_GLOBAL=true ;;
-  --all)     DO_PROJECT=true; DO_GLOBAL=true ;;
-  "")        prompt_scope ;;
-  *)         usage ;;
-esac
+if [ $# -eq 0 ]; then
+  prompt_scope
+else
+  for arg in "$@"; do
+    case "$arg" in
+      --project) DO_PROJECT=true ;;
+      --global)  DO_GLOBAL=true ;;
+      --daemon)  DO_DAEMON=true ;;
+      *)         usage ;;
+    esac
+  done
+fi
 
 # Resolve $HOME at install time — Claude Code may not use a shell that expands env vars
 HOOKS_PATH="$HOME/.claude/hooks"
@@ -127,6 +141,26 @@ install_settings() {
   fi
 }
 
+install_daemon() {
+  if [ "$(uname)" != "Linux" ]; then
+    echo "WARNING: --daemon is Linux only (systemd). Skipping on $(uname)."
+    return
+  fi
+  if ! command -v systemctl >/dev/null 2>&1; then
+    echo "ERROR: systemctl not found. Is systemd installed?"
+    exit 1
+  fi
+  if ! command -v inotifywait >/dev/null 2>&1; then
+    echo "Installing inotify-tools..."
+    sudo apt install -y inotify-tools
+  fi
+  sudo cp "$SHARED_DIR/claude-webui-linux.service" /etc/systemd/system/claude-webui.service
+  sudo cp "$SHARED_DIR/claude-webui-watcher-linux.service" /etc/systemd/system/claude-webui-watcher.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now claude-webui.service claude-webui-watcher.service
+  echo "Daemon installed and started (claude-webui + claude-webui-watcher)"
+}
+
 if [ "$DO_GLOBAL" = true ]; then
   install_symlinks
   install_settings "$HOME/.claude/settings.json"
@@ -138,6 +172,10 @@ if [ "$DO_PROJECT" = true ]; then
   install_symlinks
   install_settings "$PROJECT_DIR/.claude/settings.json"
   echo "WebUI hooks installed for: $PROJECT_DIR"
+fi
+
+if [ "$DO_DAEMON" = true ]; then
+  install_daemon
 fi
 
 echo "Start the server: python3 $SHARED_DIR/server.py"

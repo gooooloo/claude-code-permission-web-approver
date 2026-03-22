@@ -8,9 +8,9 @@
 # Scopes:
 #   --project  Remove hooks from <cwd>/.claude/settings.json
 #   --global   Remove hooks from ~/.claude/settings.json + remove symlinks from ~/.claude/hooks/
-#   --all      Do both --project and --global
+#   --daemon   Remove systemd service (Linux only)
 #
-# Usage: /path/to/uninstall.sh --project|--global|--all
+# Usage: /path/to/uninstall.sh --project|--global|--daemon [--daemon]
 # Deps:  jq
 
 set -e
@@ -19,11 +19,13 @@ PROJECT_DIR="$(pwd)"
 HOOKS_DIR="$HOME/.claude/hooks"
 
 usage() {
-  echo "Usage: $0 --project|--global|--all"
+  echo "Usage: $0 --project|--global|--daemon [--daemon]"
   echo ""
   echo "  --project  Remove hooks from <cwd>/.claude/settings.json"
   echo "  --global   Remove hooks from ~/.claude/settings.json + symlinks"
-  echo "  --all      Remove both project and global"
+  echo "  --daemon   Remove systemd service (Linux only)"
+  echo ""
+  echo "Flags can be combined: $0 --global --daemon"
   exit 1
 }
 
@@ -31,28 +33,40 @@ prompt_scope() {
   echo "Select uninstall scope:"
   echo "  1) project  — Remove hooks from <cwd>/.claude/settings.json"
   echo "  2) global   — Remove hooks from ~/.claude/settings.json + symlinks"
-  echo "  3) all      — Remove both project and global"
+  echo "  3) daemon   — Remove systemd service (Linux only)"
   echo ""
-  printf "Enter choice [1-3]: "
-  read -r choice
-  case "$choice" in
-    1) DO_PROJECT=true ;;
-    2) DO_GLOBAL=true ;;
-    3) DO_PROJECT=true; DO_GLOBAL=true ;;
-    *) echo "Invalid choice"; exit 1 ;;
-  esac
+  echo "Enter choices separated by space (e.g. '1 3' or '2'):"
+  printf "> "
+  read -r choices
+  for c in $choices; do
+    case "$c" in
+      1) DO_PROJECT=true ;;
+      2) DO_GLOBAL=true ;;
+      3) DO_DAEMON=true ;;
+      *) echo "Invalid choice: $c"; exit 1 ;;
+    esac
+  done
+  if [ "$DO_PROJECT" = false ] && [ "$DO_GLOBAL" = false ] && [ "$DO_DAEMON" = false ]; then
+    echo "No scope selected"; exit 1
+  fi
 }
 
 DO_PROJECT=false
 DO_GLOBAL=false
+DO_DAEMON=false
 
-case "${1:-}" in
-  --project) DO_PROJECT=true ;;
-  --global)  DO_GLOBAL=true ;;
-  --all)     DO_PROJECT=true; DO_GLOBAL=true ;;
-  "")        prompt_scope ;;
-  *)         usage ;;
-esac
+if [ $# -eq 0 ]; then
+  prompt_scope
+else
+  for arg in "$@"; do
+    case "$arg" in
+      --project) DO_PROJECT=true ;;
+      --global)  DO_GLOBAL=true ;;
+      --daemon)  DO_DAEMON=true ;;
+      *)         usage ;;
+    esac
+  done
+fi
 
 remove_hooks_from_settings() {
   local settings_file="$1"
@@ -100,6 +114,25 @@ remove_symlinks() {
   done
   echo "Removed $removed symlinks from: $HOOKS_DIR"
 }
+
+uninstall_daemon() {
+  if [ "$(uname)" != "Linux" ]; then
+    echo "WARNING: --daemon is Linux only (systemd). Skipping on $(uname)."
+    return
+  fi
+  if ! command -v systemctl >/dev/null 2>&1; then
+    echo "systemctl not found, skipping daemon removal."
+    return
+  fi
+  sudo systemctl disable --now claude-webui.service claude-webui-watcher.service 2>/dev/null || true
+  sudo rm -f /etc/systemd/system/claude-webui.service /etc/systemd/system/claude-webui-watcher.service
+  sudo systemctl daemon-reload
+  echo "Daemon services removed"
+}
+
+if [ "$DO_DAEMON" = true ]; then
+  uninstall_daemon
+fi
 
 if [ "$DO_GLOBAL" = true ]; then
   remove_symlinks

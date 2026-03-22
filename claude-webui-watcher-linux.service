@@ -1,0 +1,13 @@
+[Unit]
+Description=Claude Code WebUI file watcher (auto-restart on .py change)
+After=claude-webui.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/azureuser/dev/claude-code-webui
+ExecStart=/bin/bash -c 'while true; do inotifywait -e modify -e create -e delete --include ".*\\.py$$" . && sleep 1 && systemctl restart claude-webui.service; done'
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

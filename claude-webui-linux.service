@@ -1,0 +1,15 @@
+[Unit]
+Description=Claude Code WebUI Server
+After=network.target
+
+[Service]
+Type=simple
+User=azureuser
+WorkingDirectory=/home/azureuser/dev/claude-code-webui
+ExecStart=/usr/bin/python3 server.py
+Restart=always
+RestartSec=2
+Environment=HOME=/home/azureuser
+
+[Install]
+WantedBy=multi-user.target
