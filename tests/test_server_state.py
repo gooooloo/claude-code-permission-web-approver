@@ -1,0 +1,374 @@
+"""Tests for server.py — transcript parsing and state derivation."""
+
+import json
+import os
+import sys
+import threading
+import time
+import unittest.mock as mock
+
+import pytest
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
+
+import server
+
+
+# ── Helpers ──
+
+
+def make_user_entry(text, tool_results=None):
+    """Create a user transcript entry."""
+    if tool_results:
+        content = tool_results
+    elif isinstance(text, str):
+        content = text
+    else:
+        content = text
+    return {"type": "user", "message": {"content": content}}
+
+
+def make_assistant_entry(text="", tool_uses=None, stop_reason="end_turn"):
+    """Create an assistant transcript entry."""
+    content = []
+    if text:
+        content.append({"type": "text", "text": text})
+    if tool_uses:
+        content.extend(tool_uses)
+    return {"type": "assistant", "message": {"content": content, "stop_reason": stop_reason}}
+
+
+def make_tool_use(name, tool_input=None, tool_id="tu-1"):
+    return {"type": "tool_use", "name": name, "input": tool_input or {}, "id": tool_id}
+
+
+def make_tool_result(tool_use_id, content="done"):
+    return {"type": "tool_result", "tool_use_id": tool_use_id, "content": content}
+
+
+@pytest.fixture(autouse=True)
+def clean_server_state(tmp_path):
+    """Reset server globals before each test."""
+    old_sessions = server.sessions.copy()
+    old_auto = server.session_auto_allow.copy()
+    old_queue = server.QUEUE_DIR
+    server.sessions.clear()
+    server.session_auto_allow.clear()
+    server.QUEUE_DIR = str(tmp_path / "queue")
+    os.makedirs(server.QUEUE_DIR, exist_ok=True)
+    yield
+    server.sessions.clear()
+    server.sessions.update(old_sessions)
+    server.session_auto_allow.clear()
+    server.session_auto_allow.update(old_auto)
+    server.QUEUE_DIR = old_queue
+
+
+def setup_session(sid, entries, queue_dir=None):
+    """Register a session with given transcript entries."""
+    server.sessions[sid] = {
+        "transcript_path": "",
+        "terminal_id": "",
+        "tmux_socket": "",
+        "cwd": "/tmp",
+        "registered_at": time.time(),
+        "transcript_offset": 0,
+        "transcript_entries": entries,
+        "derived_state": "idle",
+        "last_activity": time.time(),
+        "last_summary": "",
+        "last_user_prompt": "",
+    }
+
+
+# ── _derive_state tests ──
+
+
+class TestDeriveStateIdle:
+    def test_empty_transcript(self):
+        setup_session("s1", [])
+        state, summary, prompt = server._derive_state("s1", server.sessions["s1"])
+        assert state == "idle"
+
+    def test_assistant_end_turn_no_tools(self):
+        entries = [
+            make_user_entry("hello"),
+            make_assistant_entry("Hi there!", stop_reason="end_turn"),
+        ]
+        setup_session("s1", entries)
+        state, summary, prompt = server._derive_state("s1", server.sessions["s1"])
+        assert state == "idle"
+        assert "Hi there!" in summary
+
+    def test_all_tool_uses_resolved(self):
+        entries = [
+            make_user_entry("do something"),
+            make_assistant_entry(
+                "Let me read that.",
+                tool_uses=[make_tool_use("Read", {}, "tu-1")],
+                stop_reason="end_turn",
+            ),
+            make_user_entry("", tool_results=[make_tool_result("tu-1")]),
+            make_assistant_entry("Done.", stop_reason="end_turn"),
+        ]
+        setup_session("s1", entries)
+        state, summary, prompt = server._derive_state("s1", server.sessions["s1"])
+        assert state == "idle"
+
+
+class TestDeriveStateBusy:
+    def test_user_after_assistant(self):
+        entries = [
+            make_assistant_entry("previous reply", stop_reason="end_turn"),
+            make_user_entry("new question"),
+        ]
+        setup_session("s1", entries)
+        state, summary, prompt = server._derive_state("s1", server.sessions["s1"])
+        assert state == "busy"
+        assert summary == ""  # stale summary cleared
+
+    def test_unresolved_tool_use(self):
+        entries = [
+            make_user_entry("fix the bug"),
+            make_assistant_entry(
+                "Let me edit.",
+                tool_uses=[make_tool_use("Edit", {}, "tu-99")],
+                stop_reason="tool_use",
+            ),
+        ]
+        setup_session("s1", entries)
+        state, summary, prompt = server._derive_state("s1", server.sessions["s1"])
+        assert state == "busy"
+
+
+class TestDeriveStateElicitation:
+    def test_ask_user_question(self):
+        entries = [
+            make_user_entry("help me"),
+            make_assistant_entry(
+                "Which option?",
+                tool_uses=[make_tool_use("AskUserQuestion", {"question": "A or B?"}, "tu-ask")],
+                stop_reason="tool_use",
+            ),
+        ]
+        setup_session("s1", entries)
+        state, summary, prompt = server._derive_state("s1", server.sessions["s1"])
+        assert state == "elicitation"
+
+
+class TestDeriveStatePlanReview:
+    def test_exit_plan_mode(self):
+        entries = [
+            make_user_entry("plan something"),
+            make_assistant_entry(
+                "Here's my plan.",
+                tool_uses=[make_tool_use("ExitPlanMode", {"plan": "step 1, step 2"}, "tu-plan")],
+                stop_reason="tool_use",
+            ),
+        ]
+        setup_session("s1", entries)
+        state, summary, prompt = server._derive_state("s1", server.sessions["s1"])
+        assert state == "plan_review"
+
+
+class TestDeriveStatePermissionPrompt:
+    def test_pending_request_file(self):
+        entries = [
+            make_user_entry("deploy it"),
+            make_assistant_entry(
+                "Running deploy.",
+                tool_uses=[make_tool_use("Bash", {"command": "deploy.sh"}, "tu-deploy")],
+                stop_reason="tool_use",
+            ),
+        ]
+        setup_session("s1", entries)
+        # Write a pending request file
+        req = {
+            "id": "req-1",
+            "tool_name": "Bash",
+            "tool_input": {"command": "deploy.sh"},
+            "session_id": "s1",
+            "pid": os.getpid(),  # current process so it looks alive
+        }
+        req_path = os.path.join(server.QUEUE_DIR, "req-1.request.json")
+        with open(req_path, "w") as f:
+            json.dump(req, f)
+
+        state, summary, prompt = server._derive_state("s1", server.sessions["s1"])
+        assert state == "permission_prompt"
+
+
+# ── _has_tool_result ──
+
+
+class TestHasToolResult:
+    def test_found(self):
+        entries = [
+            make_user_entry("", tool_results=[make_tool_result("tu-1", "ok")]),
+        ]
+        assert server._has_tool_result(entries, "tu-1") is True
+
+    def test_not_found(self):
+        entries = [
+            make_user_entry("", tool_results=[make_tool_result("tu-1", "ok")]),
+        ]
+        assert server._has_tool_result(entries, "tu-other") is False
+
+    def test_empty_entries(self):
+        assert server._has_tool_result([], "tu-1") is False
+
+
+# ── _all_tool_uses_resolved ──
+
+
+class TestAllToolUsesResolved:
+    def test_all_resolved(self):
+        tool_uses = [make_tool_use("Read", {}, "tu-1"), make_tool_use("Grep", {}, "tu-2")]
+        entries = [
+            make_user_entry("", tool_results=[make_tool_result("tu-1"), make_tool_result("tu-2")]),
+        ]
+        assert server._all_tool_uses_resolved(entries, tool_uses) is True
+
+    def test_partial_resolved(self):
+        tool_uses = [make_tool_use("Read", {}, "tu-1"), make_tool_use("Grep", {}, "tu-2")]
+        entries = [
+            make_user_entry("", tool_results=[make_tool_result("tu-1")]),
+        ]
+        assert server._all_tool_uses_resolved(entries, tool_uses) is False
+
+    def test_empty_tool_uses(self):
+        assert server._all_tool_uses_resolved([], []) is True
+
+
+# ── _tool_use_resolved_in_transcript ──
+
+
+class TestToolUseResolvedInTranscript:
+    def test_resolved(self):
+        entries = [
+            make_assistant_entry("", tool_uses=[make_tool_use("Bash", {}, "tu-1")]),
+            make_user_entry("", tool_results=[make_tool_result("tu-1")]),
+        ]
+        assert server._tool_use_resolved_in_transcript(entries, "Bash", {}) is True
+
+    def test_not_resolved(self):
+        entries = [
+            make_assistant_entry("", tool_uses=[make_tool_use("Bash", {}, "tu-1")]),
+        ]
+        assert server._tool_use_resolved_in_transcript(entries, "Bash", {}) is False
+
+    def test_no_matching_tool(self):
+        entries = [
+            make_assistant_entry("", tool_uses=[make_tool_use("Read", {}, "tu-1")]),
+        ]
+        assert server._tool_use_resolved_in_transcript(entries, "Bash", {}) is False
+
+
+# ── Transcript incremental parsing (update_session_state) ──
+
+
+class TestUpdateSessionState:
+    def test_parses_jsonl_incrementally(self, tmp_path):
+        transcript = tmp_path / "transcript.jsonl"
+        line1 = json.dumps(make_user_entry("hello"))
+        line2 = json.dumps(make_assistant_entry("hi", stop_reason="end_turn"))
+        transcript.write_text(line1 + "\n" + line2 + "\n")
+
+        setup_session("s1", [])
+        server.sessions["s1"]["transcript_path"] = str(transcript)
+
+        server.update_session_state("s1")
+
+        s = server.sessions["s1"]
+        assert len(s["transcript_entries"]) == 2
+        assert s["derived_state"] == "idle"
+        assert s["transcript_offset"] > 0
+
+    def test_incremental_read(self, tmp_path):
+        transcript = tmp_path / "transcript.jsonl"
+        line1 = json.dumps(make_user_entry("hello"))
+        transcript.write_text(line1 + "\n")
+
+        setup_session("s1", [])
+        server.sessions["s1"]["transcript_path"] = str(transcript)
+
+        server.update_session_state("s1")
+        assert len(server.sessions["s1"]["transcript_entries"]) == 1
+
+        # Append more
+        with open(str(transcript), "a") as f:
+            f.write(json.dumps(make_assistant_entry("reply", stop_reason="end_turn")) + "\n")
+
+        server.update_session_state("s1")
+        assert len(server.sessions["s1"]["transcript_entries"]) == 2
+
+    def test_handles_truncated_file(self, tmp_path):
+        transcript = tmp_path / "transcript.jsonl"
+        long_content = "\n".join(
+            json.dumps(make_user_entry(f"msg {i}")) for i in range(10)
+        ) + "\n"
+        transcript.write_text(long_content)
+
+        setup_session("s1", [])
+        server.sessions["s1"]["transcript_path"] = str(transcript)
+        server.update_session_state("s1")
+
+        old_offset = server.sessions["s1"]["transcript_offset"]
+        assert old_offset > 0
+
+        # Simulate /clear — file gets shorter
+        transcript.write_text(json.dumps(make_user_entry("fresh")) + "\n")
+        server.update_session_state("s1")
+        # Should have reset and re-read
+        entries = server.sessions["s1"]["transcript_entries"]
+        assert any("fresh" in json.dumps(e) for e in entries)
+
+    def test_missing_transcript(self):
+        setup_session("s1", [])
+        server.sessions["s1"]["transcript_path"] = "/nonexistent/path.jsonl"
+        # Should not raise
+        server.update_session_state("s1")
+
+    def test_nonexistent_session(self):
+        # Should not raise
+        server.update_session_state("nonexistent")
+
+
+# ── User prompt extraction ──
+
+
+class TestUserPromptExtraction:
+    def test_plain_text_prompt(self):
+        entries = [
+            make_user_entry("What is Python?"),
+            make_assistant_entry("Python is a language.", stop_reason="end_turn"),
+        ]
+        setup_session("s1", entries)
+        _, _, prompt = server._derive_state("s1", server.sessions["s1"])
+        assert prompt == "What is Python?"
+
+    def test_strips_system_tags(self):
+        text = "<system-reminder>ignore this</system-reminder>Real question here"
+        entries = [
+            make_user_entry(text),
+            make_assistant_entry("Answer.", stop_reason="end_turn"),
+        ]
+        setup_session("s1", entries)
+        _, _, prompt = server._derive_state("s1", server.sessions["s1"])
+        assert "system-reminder" not in prompt
+        assert "Real question here" in prompt
+
+    def test_multipart_content(self):
+        content = [
+            {"type": "text", "text": "First part."},
+            {"type": "text", "text": "Second part."},
+        ]
+        entries = [
+            make_user_entry(content),
+            make_assistant_entry("Reply.", stop_reason="end_turn"),
+        ]
+        setup_session("s1", entries)
+        _, _, prompt = server._derive_state("s1", server.sessions["s1"])
+        assert "First part." in prompt
+        assert "Second part." in prompt

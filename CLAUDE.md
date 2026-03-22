@@ -64,7 +64,9 @@ python3 server.py --lan    # bind 0.0.0.0 for LAN access
 .\uninstall.ps1 -Scope All
 ```
 
-No build step, no test suite, no linter.
+No build step, no linter.
+
+**Testing:** `python3 -m pytest tests/ -v` — 103 tests covering core logic (platform_utils, permission rules, server state derivation). Run tests after any code change to these modules.
 
 **Linux/macOS deps:** Python 3, `jq` (install/uninstall scripts), Bash (install scripts). Optional: `entr` (dev.sh), `inotify-tools` (--daemon).
 
