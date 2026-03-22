@@ -193,6 +193,7 @@ HTML_PAGE = """<!DOCTYPE html>
     line-height: 1.4;
   }
   .sc-prompt-input:focus { border-color: #a78bfa; }
+  .sc-prompt-input:disabled { opacity: 0.5; cursor: not-allowed; }
   .sc-prompt-input::placeholder { color: #555; }
   .sc-prompt-send {
     background: #a78bfa;
@@ -576,6 +577,7 @@ HTML_PAGE = """<!DOCTYPE html>
     overflow-y: hidden;
   }
   .prompt-input:focus { outline: none; border-color: #a78bfa; }
+  .prompt-input:disabled { opacity: 0.5; cursor: not-allowed; }
   .prompt-input::placeholder { color: #555; }
   .prompt-bottom-row {
     display: flex;
@@ -916,9 +918,10 @@ async function fetchSessions() {
     const res = await fetch('/api/sessions');
     const data = await res.json();
     serverName = data.name || 'local';
+    console.log('[poll] fetchSessions', (data.sessions||[]).map(s => s.session_id + ':' + s.state));
     renderDashboard(data.sessions || []);
   } catch (e) {
-    // connection error, silently retry on next poll
+    console.error('[poll] fetchSessions error', e);
   }
 }
 
@@ -946,13 +949,14 @@ function buildCardHTML(s) {
     html += ' <button class="btn-deny-sm" onclick="respond(\\'' + esc(pr.id) + '\\',\\'deny\\',this)">Deny</button>';
     html += '</div>';
   }
-  if (state === 'idle' && s.prompt_capable !== false) {
+  if (s.prompt_capable !== false) {
+    var disabled = state !== 'idle';
     html += '<div class="sc-prompt-row" onclick="event.stopPropagation()">';
-    html += '<textarea class="sc-prompt-input" id="dashPrompt-' + esc(s.session_id) + '" placeholder="Type a prompt... Ctrl+Enter to send" rows="1" oninput="this.style.height=\\'auto\\';this.style.height=this.scrollHeight+\\'px\\'" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key===\\'Enter\\'){event.preventDefault();sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')}"></textarea>';
-    html += '<button class="sc-prompt-send" onclick="sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')">Send</button>';
+    html += '<textarea class="sc-prompt-input" id="dashPrompt-' + esc(s.session_id) + '" placeholder="' + (disabled ? 'Waiting...' : 'Type a prompt... Ctrl+Enter to send') + '" rows="1"' + (disabled ? ' disabled' : '') + ' oninput="this.style.height=\\'auto\\';this.style.height=this.scrollHeight+\\'px\\'" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key===\\'Enter\\'){event.preventDefault();sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')}"></textarea>';
+    html += '<button class="sc-prompt-send" onclick="sendDashboardPrompt(\\'' + esc(s.session_id) + '\\')"' + (disabled ? ' disabled' : '') + '>Send</button>';
     html += '</div>';
     html += '<div class="sc-shortcut-row" onclick="event.stopPropagation()">';
-    html += '<button class="sc-shortcut-btn" onclick="insertAtCursor(\\'dashPrompt-' + esc(s.session_id) + '\\',\\'/clear\\')">/clear</button>';
+    html += '<button class="sc-shortcut-btn"' + (disabled ? ' disabled' : '') + ' onclick="insertAtCursor(\\'dashPrompt-' + esc(s.session_id) + '\\',\\'/clear\\')">/clear</button>';
     html += '</div>';
   }
   html += '</div>';
@@ -1113,6 +1117,15 @@ async function fetchSessionDetail() {
     // Hide prompt area if session cannot receive prompts
     const promptArea = document.getElementById('promptArea');
     if (promptArea) promptArea.style.display = session.prompt_capable === false ? 'none' : '';
+
+    // Disable prompt input when not idle
+    const pi = document.getElementById('promptInput');
+    const sendBtn = document.querySelector('.btn-send');
+    if (pi) {
+      pi.disabled = state !== 'idle';
+      pi.placeholder = state !== 'idle' ? 'Waiting...' : 'Type a prompt... Ctrl+Enter to send';
+    }
+    if (sendBtn) sendBtn.disabled = state !== 'idle';
 
     // Render permission card if applicable
     renderPermCards(session);
@@ -1820,6 +1833,9 @@ async function sendPrompt() {
       scrollToBottomOnNextRender = true;
       fetchSessionDetail();
       setTimeout(fetchSessionDetail, 500);
+      setTimeout(fetchSessionDetail, 1000);
+      setTimeout(fetchSessionDetail, 1500);
+      setTimeout(fetchSessionDetail, 2000);
     }
   } catch (e) {
     showToast('Failed to send prompt: network error', true);
@@ -1846,6 +1862,9 @@ async function quickPrompt(prompt) {
       scrollToBottomOnNextRender = true;
       fetchSessionDetail();
       setTimeout(fetchSessionDetail, 500);
+      setTimeout(fetchSessionDetail, 1000);
+      setTimeout(fetchSessionDetail, 1500);
+      setTimeout(fetchSessionDetail, 2000);
     }
   } catch (e) {
     showToast('Failed to send prompt: network error', true);
@@ -1868,6 +1887,7 @@ async function sendDashboardPrompt(sessionId) {
   const prompt = input.value.trim();
   if (!prompt) { input.focus(); return; }
   input.value = '';
+  input.blur();
   touchSession(sessionId);
   try {
     const res = await fetch('/api/send-prompt', {
@@ -1881,6 +1901,9 @@ async function sendDashboardPrompt(sessionId) {
     } else {
       fetchSessions();
       setTimeout(fetchSessions, 500);
+      setTimeout(fetchSessions, 1000);
+      setTimeout(fetchSessions, 1500);
+      setTimeout(fetchSessions, 2000);
     }
   } catch (e) {
     showToast('Failed to send prompt: network error', true);
@@ -2013,7 +2036,7 @@ document.addEventListener('keydown', function(e) {
 // ── Polling ──
 pollTimer = setInterval(() => {
   if (currentView === 'dashboard') fetchSessions();
-}, 2000);
+}, 1000);
 </script>
 </body>
 </html>"""
