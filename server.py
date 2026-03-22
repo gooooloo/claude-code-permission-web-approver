@@ -144,6 +144,37 @@ def update_session_state(sid):
         s["derived_state"], s["last_summary"], s["last_user_prompt"] = _derive_state(sid, s)
 
 
+def _extract_user_text(entry):
+    """Extract meaningful user text from a transcript entry, stripping system/command tags.
+
+    Returns empty string for local commands (/context, /help etc.) that don't need a response.
+    """
+    msg = entry.get("message", {})
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        parts = []
+        for c in content:
+            if isinstance(c, dict):
+                if c.get("type") == "text":
+                    parts.append(c.get("text", ""))
+                elif c.get("type") == "tool_result":
+                    return ""  # tool_results are not user prompts
+            elif isinstance(c, str):
+                parts.append(c)
+        text = " ".join(parts)
+    else:
+        return ""
+    # Strip known system/command XML tags
+    for tag in ("system-reminder", "local-command-caveat", "local-command-stdout",
+                "task-notification", "command-name", "command-message", "command-args"):
+        text = re.sub(rf"<{tag}>.*?</{tag}>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 def _derive_state(sid, s):
     """Derive session state from transcript entries + pending request files."""
     entries = s["transcript_entries"]
@@ -209,7 +240,14 @@ def _derive_state(sid, s):
                 user_idx = i
             if entry is last_assistant:
                 asst_idx = i
-        user_after_assistant = user_idx > asst_idx
+        if user_idx > asst_idx:
+            # Check if the last user message is a local command (e.g. /context, /help)
+            # that doesn't require a response from Claude.  These contain
+            # <local-command-caveat> or <command-name> tags and have no real user text
+            # after stripping those tags.
+            last_user_text = _extract_user_text(last_user)
+            if last_user_text:
+                user_after_assistant = True
 
     # Invariant: summary is only shown when it follows the displayed user_prompt
     if user_after_assistant:
