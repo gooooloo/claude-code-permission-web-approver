@@ -1661,13 +1661,10 @@ function enterMultiSelect(idx) {
   selectedMsgIndices.clear();
   selectedMsgIndices.add(idx);
   document.getElementById('multiSelectBar').style.display = 'flex';
-  // Show Share button only when Web Share API with file support is available (mobile)
-  try {
-    var testFile = new File([''], 'test.png', { type: 'image/png' });
-    if (navigator.canShare && navigator.canShare({ files: [testFile] })) {
-      document.getElementById('sharePNGBtn').style.display = '';
-    }
-  } catch(e) {}
+  // Show Share button when Web Share API is available
+  if (navigator.share) {
+    document.getElementById('sharePNGBtn').style.display = '';
+  }
   updateMultiSelectUI();
 }
 
