@@ -121,6 +121,41 @@ HTML_PAGE = """<!DOCTYPE html>
   .sc-collapse-btn { margin-right: 2px; margin-left: -4px; }
   .session-card.collapsed .sc-collapse-btn { transform: rotate(-90deg); }
   .session-card.collapsed .sc-body { display: none; }
+  .machine-group-header {
+    font-size: 13px;
+    font-weight: 600;
+    color: #a78bfa;
+    padding: 12px 0 4px 0;
+    border-bottom: 1px solid #2a2a4a;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    user-select: none;
+  }
+  .machine-group-header:hover { color: #c4b5fd; }
+  .machine-group-header .mg-arrow {
+    display: inline-block;
+    transition: transform 0.15s;
+    font-size: 10px;
+  }
+  .machine-group-header.mg-collapsed .mg-arrow { transform: rotate(-90deg); }
+  .machine-empty {
+    color: #555;
+    font-size: 13px;
+    padding: 8px 0 12px 0;
+  }
+  .sc-machine {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: #2a2a4a;
+    color: #888;
+    margin-left: 6px;
+  }
   .sc-sid-row {
     margin-bottom: 6px;
   }
@@ -779,6 +814,7 @@ HTML_PAGE = """<!DOCTYPE html>
 let currentView = 'dashboard';
 let currentSessionId = null;
 let serverName = 'local';
+let federationRemoteNames = [];
 let respondedIds = new Set();
 let imagePaths = [];
 let pollTimer = null;
@@ -821,16 +857,36 @@ function getCollapsedSet() {
 function isCollapsed(sid) { return getCollapsedSet().has(sid); }
 function sortDashboardCards() {
   const el = document.getElementById('sessionList');
-  const cards = [...el.querySelectorAll('.session-card[data-sid]')];
-  cards.sort((a, b) => {
-    const ca = a.classList.contains('collapsed') ? 1 : 0;
-    const cb = b.classList.contains('collapsed') ? 1 : 0;
-    if (ca !== cb) return ca - cb;
-    const na = (a.querySelector('.sc-project')?.textContent || '').toLowerCase();
-    const nb = (b.querySelector('.sc-project')?.textContent || '').toLowerCase();
-    return na.localeCompare(nb);
-  });
-  cards.forEach(c => el.appendChild(c));
+  if (federationRemoteNames.length > 0) {
+    const headers = el.querySelectorAll('.machine-group-header[data-machine]');
+    headers.forEach(header => {
+      const cards = [];
+      let sibling = header.nextElementSibling;
+      while (sibling && !sibling.classList.contains('machine-group-header')) {
+        if (sibling.classList.contains('session-card')) cards.push(sibling);
+        sibling = sibling.nextElementSibling;
+      }
+      cards.sort((a, b) => {
+        const ca = a.classList.contains('collapsed') ? 1 : 0;
+        const cb = b.classList.contains('collapsed') ? 1 : 0;
+        if (ca !== cb) return ca - cb;
+        return getInteractTime(b.getAttribute('data-sid')) - getInteractTime(a.getAttribute('data-sid'));
+      });
+      let prev = header;
+      cards.forEach(c => { prev.after(c); prev = c; });
+    });
+  } else {
+    const cards = [...el.querySelectorAll('.session-card[data-sid]')];
+    cards.sort((a, b) => {
+      const ca = a.classList.contains('collapsed') ? 1 : 0;
+      const cb = b.classList.contains('collapsed') ? 1 : 0;
+      if (ca !== cb) return ca - cb;
+      const na = (a.querySelector('.sc-project')?.textContent || '').toLowerCase();
+      const nb = (b.querySelector('.sc-project')?.textContent || '').toLowerCase();
+      return na.localeCompare(nb);
+    });
+    cards.forEach(c => el.appendChild(c));
+  }
 }
 function toggleCollapse(sid, btn) {
   const set = getCollapsedSet();
@@ -855,6 +911,25 @@ function collapseAll() {
   lastDashboardHash = '';
 }
 
+function getCollapsedMachines() {
+  try { return new Set(JSON.parse(localStorage.getItem('collapsed_machines') || '[]')); }
+  catch { return new Set(); }
+}
+function isMachineCollapsed(machine) { return getCollapsedMachines().has(machine); }
+function toggleMachineCollapse(machine) {
+  const set = getCollapsedMachines();
+  if (set.has(machine)) set.delete(machine); else set.add(machine);
+  localStorage.setItem('collapsed_machines', JSON.stringify([...set]));
+  const header = document.querySelector('.machine-group-header[data-machine="' + machine + '"]');
+  if (header) header.classList.toggle('mg-collapsed');
+  const el = document.getElementById('sessionList');
+  let sibling = header ? header.nextElementSibling : null;
+  while (sibling && !sibling.classList.contains('machine-group-header')) {
+    sibling.style.display = set.has(machine) ? 'none' : '';
+    sibling = sibling.nextElementSibling;
+  }
+  lastDashboardHash = '';
+}
 
 function renderMarkdown(text) {
   let s = esc(text.trim());
@@ -925,6 +1000,7 @@ async function fetchSessions() {
     const res = await fetch('/api/sessions');
     const data = await res.json();
     serverName = data.name || 'local';
+    federationRemoteNames = data.remote_names || [];
     renderDashboard(data.sessions || []);
   } catch (e) {
     // connection error, silently retry on next poll
@@ -940,6 +1016,7 @@ function buildCardHTML(s) {
   html += '<button class="sc-collapse-btn" onclick="event.stopPropagation();toggleCollapse(\\'' + esc(s.session_id) + '\\',this)" title="Collapse/Expand">&#9660;</button>';
   html += '<span class="state-badge badge-' + state + '" style="cursor:pointer" onclick="event.stopPropagation();openSession(\\'' + esc(s.session_id) + '\\')">' + stateLabel(state) + '</span>';
   html += '<span class="sc-project">' + esc(project) + '</span>';
+  if (s.machine && federationRemoteNames.length > 0) html += '<span class="sc-machine">' + esc(s.machine) + '</span>';
   if (time) html += '<span class="sc-time">' + time + '</span>';
   html += '</div>';
   html += '<div class="sc-body">';
@@ -979,10 +1056,52 @@ function cardHash(s) {
   return (s.state||'') + ':' + (s.last_summary||'') + ':' + (s.last_user_prompt||'') + ':' + (s.last_activity||'') + ':' + (s.pending_request ? s.pending_request.id : '');
 }
 
+function _updateOrCreateCard(existingById, s, mgHidden) {
+  const sid = s.session_id;
+  const state = s.state || 'busy';
+  const hue = sessionHue(sid);
+  const h = cardHash(s);
+  let card = existingById[sid];
+  if (card) {
+    const collapsed = isCollapsed(sid) ? ' collapsed' : '';
+    card.className = 'session-card state-' + state + collapsed;
+    card.style.cssText = '--sh:' + hue + (mgHidden ? ';display:none' : '');
+    const prev = card.getAttribute('data-hash');
+    if (prev !== h) {
+      const ta = card.querySelector('.sc-prompt-input');
+      const savedVal = ta ? ta.value : '';
+      const wasFocused = ta && document.activeElement === ta;
+      const wasBusy = prev && prev.startsWith('busy:');
+      card.innerHTML = buildCardHTML(s);
+      card.setAttribute('data-hash', h);
+      if (savedVal || wasFocused) {
+        const newTa = card.querySelector('.sc-prompt-input');
+        if (newTa) {
+          newTa.value = savedVal;
+          if (wasFocused) newTa.focus();
+        }
+      } else if (wasBusy && state === 'idle') {
+        const newTa = card.querySelector('.sc-prompt-input');
+        if (newTa) newTa.focus();
+      }
+    }
+  } else {
+    card = document.createElement('div');
+    card.setAttribute('data-sid', sid);
+    card.setAttribute('data-hash', h);
+    const collapsed = isCollapsed(sid) ? ' collapsed' : '';
+    card.className = 'session-card state-' + state + collapsed;
+    card.style.cssText = '--sh:' + hue + (mgHidden ? ';display:none' : '');
+    card.innerHTML = buildCardHTML(s);
+  }
+  return card;
+}
+
 function renderDashboard(sessions) {
   const el = document.getElementById('sessionList');
+  const hasFederation = federationRemoteNames.length > 0;
 
-  if (sessions.length === 0) {
+  if (sessions.length === 0 && !hasFederation) {
     if (lastDashboardHash !== 'empty') {
       el.innerHTML = '<div class="empty"><span class="dot"></span>No active sessions</div>';
       lastDashboardHash = 'empty';
@@ -998,75 +1117,119 @@ function renderDashboard(sessions) {
 
   const collapsedSet = getCollapsedSet();
 
-  sessions.sort((a, b) => {
-    const ca = collapsedSet.has(a.session_id) ? 1 : 0;
-    const cb = collapsedSet.has(b.session_id) ? 1 : 0;
-    if (ca !== cb) return ca - cb;
-    const na = ((a.cwd || '').split('/').pop() || '').toLowerCase();
-    const nb = ((b.cwd || '').split('/').pop() || '').toLowerCase();
-    return na.localeCompare(nb);
+  const existingById = {};
+  el.querySelectorAll('.session-card[data-sid]').forEach(c => { existingById[c.getAttribute('data-sid')] = c; });
+  const desiredSids = new Set(sessions.map(s => s.session_id));
+
+  // Remove orphaned cards
+  el.querySelectorAll('.session-card[data-sid]').forEach(c => {
+    if (!desiredSids.has(c.getAttribute('data-sid'))) c.remove();
   });
 
-  const desiredOrder = sessions.map(s => s.session_id);
-  const existingCards = el.querySelectorAll('.session-card[data-sid]');
-  const existingMap = {};
-  existingCards.forEach(c => { existingMap[c.getAttribute('data-sid')] = c; });
+  if (!hasFederation) {
+    // No federation: original flat rendering
+    sessions.sort((a, b) => {
+      const ca = collapsedSet.has(a.session_id) ? 1 : 0;
+      const cb = collapsedSet.has(b.session_id) ? 1 : 0;
+      if (ca !== cb) return ca - cb;
+      const na = ((a.cwd || '').split('/').pop() || '').toLowerCase();
+      const nb = ((b.cwd || '').split('/').pop() || '').toLowerCase();
+      return na.localeCompare(nb);
+    });
 
-  existingCards.forEach(c => {
-    if (!desiredOrder.includes(c.getAttribute('data-sid'))) c.remove();
-  });
+    let prevNode = null;
+    sessions.forEach(s => {
+      const card = _updateOrCreateCard(existingById, s, false);
+      if (!card.parentNode) el.appendChild(card);
+      if (prevNode) {
+        if (card.previousElementSibling !== prevNode) prevNode.after(card);
+      } else {
+        if (card !== el.firstElementChild) el.prepend(card);
+      }
+      prevNode = card;
+    });
+  } else {
+    // Federation: group by machine
+    const groups = {};
+    const ln = serverName;
+    groups[ln] = [];
+    federationRemoteNames.forEach(n => { if (!groups[n]) groups[n] = []; });
+    sessions.forEach(s => {
+      const m = s.machine || ln;
+      if (!groups[m]) groups[m] = [];
+      groups[m].push(s);
+    });
 
-  let prevNode = null;
-  sessions.forEach(s => {
-    const sid = s.session_id;
-    const state = s.state || 'busy';
-    const hue = sessionHue(sid);
-    const h = cardHash(s);
-    let card = existingMap[sid];
-    if (card) {
-      const collapsed = isCollapsed(sid) ? ' collapsed' : '';
-      card.className = 'session-card state-' + state + collapsed;
-      card.style.cssText = '--sh:' + hue;
-      const prev = card.getAttribute('data-hash');
-      if (prev !== h) {
-        const ta = card.querySelector('.sc-prompt-input');
-        const savedVal = ta ? ta.value : '';
-        const wasFocused = ta && document.activeElement === ta;
-        const wasBusy = prev && prev.startsWith('busy:');
-        card.innerHTML = buildCardHTML(s);
-        card.setAttribute('data-hash', h);
-        if (savedVal || wasFocused) {
-          const newTa = card.querySelector('.sc-prompt-input');
-          if (newTa) {
-            newTa.value = savedVal;
-            if (wasFocused) newTa.focus();
-          }
-        } else if (wasBusy && state === 'idle') {
-          const newTa = card.querySelector('.sc-prompt-input');
-          if (newTa) newTa.focus();
+    Object.values(groups).forEach(arr => {
+      arr.sort((a, b) => {
+        const ca = collapsedSet.has(a.session_id) ? 1 : 0;
+        const cb = collapsedSet.has(b.session_id) ? 1 : 0;
+        if (ca !== cb) return ca - cb;
+        return getInteractTime(b.session_id) - getInteractTime(a.session_id);
+      });
+    });
+
+    const groupOrder = [ln, ...federationRemoteNames.filter(n => n !== ln).sort()];
+    const desiredMachines = new Set(groupOrder);
+
+    el.querySelectorAll('.machine-group-header[data-machine]').forEach(h => {
+      if (!desiredMachines.has(h.getAttribute('data-machine'))) h.remove();
+    });
+    el.querySelectorAll('.machine-empty[data-machine]').forEach(e => {
+      if (!desiredMachines.has(e.getAttribute('data-machine'))) e.remove();
+    });
+
+    let prevNode = null;
+    function posAfter(node) {
+      if (!node.parentNode) el.appendChild(node);
+      if (prevNode) {
+        if (node.previousElementSibling !== prevNode) prevNode.after(node);
+      } else {
+        if (node !== el.firstElementChild) el.prepend(node);
+      }
+      prevNode = node;
+    }
+
+    groupOrder.forEach(machine => {
+      const arr = groups[machine] || [];
+      let header = el.querySelector('.machine-group-header[data-machine="' + machine + '"]');
+      if (!header) {
+        header = document.createElement('div');
+        header.setAttribute('data-machine', machine);
+      }
+      header.className = 'machine-group-header' + (isMachineCollapsed(machine) ? ' mg-collapsed' : '');
+      header.onclick = function() { toggleMachineCollapse(machine); };
+      const cnt = arr.length;
+      header.innerHTML = '<span class="mg-arrow">&#9660;</span>' + esc(machine) + ' <span style="font-size:11px;opacity:0.5;text-transform:none;font-weight:400">(' + cnt + ')</span>';
+      posAfter(header);
+
+      const mgHidden = isMachineCollapsed(machine);
+
+      if (arr.length === 0) {
+        let empty = el.querySelector('.machine-empty[data-machine="' + machine + '"]');
+        if (!empty) {
+          empty = document.createElement('div');
+          empty.className = 'machine-empty';
+          empty.setAttribute('data-machine', machine);
+          empty.textContent = 'No active sessions';
         }
+        empty.style.display = mgHidden ? 'none' : '';
+        posAfter(empty);
+      } else {
+        const empty = el.querySelector('.machine-empty[data-machine="' + machine + '"]');
+        if (empty) empty.remove();
       }
-    } else {
-      card = document.createElement('div');
-      card.setAttribute('data-sid', sid);
-      card.setAttribute('data-hash', h);
-      const collapsed = isCollapsed(sid) ? ' collapsed' : '';
-      card.className = 'session-card state-' + state + collapsed;
-      card.style.cssText = '--sh:' + hue;
-      card.innerHTML = buildCardHTML(s);
-      el.appendChild(card);
+
+      arr.forEach(s => {
+        const card = _updateOrCreateCard(existingById, s, mgHidden);
+        posAfter(card);
+      });
+    });
+
+    while (prevNode && prevNode.nextElementSibling) {
+      prevNode.nextElementSibling.remove();
     }
-    if (prevNode) {
-      if (card.previousElementSibling !== prevNode) {
-        prevNode.after(card);
-      }
-    } else {
-      if (card !== el.firstElementChild) {
-        el.prepend(card);
-      }
-    }
-    prevNode = card;
-  });
+  }
 
   lastDashboardHash = sessions.map(s => s.session_id + ':' + cardHash(s)).join('|');
 }
