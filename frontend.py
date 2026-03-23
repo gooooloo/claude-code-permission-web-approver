@@ -1582,56 +1582,69 @@ function exportSelectedHTML() {
   exitMultiSelect();
 }
 
+var pngMsgStyles = {
+  'msg-user':      { bg: '#1e3a5f', border: '#3b82f6', labelColor: '#3b82f6' },
+  'msg-assistant': { bg: '#1a2744', border: '#a78bfa', labelColor: '#a78bfa' },
+  'msg-tool':      { bg: '#0f0f23', border: '#f97316', labelColor: '#f97316', fontSize: '12px' },
+  'msg-system':    { bg: '#1a1a2e', border: '#6b7280', labelColor: '#6b7280', fontSize: '12px', textAlign: 'center' }
+};
+
+function pngInlineStyles(container) {
+  // Inline all styles so SVG foreignObject renders correctly
+  var font = '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif';
+  container.querySelectorAll('.png-msg').forEach(function(el) {
+    var cls = el.getAttribute('data-cls') || '';
+    var s = pngMsgStyles[cls] || pngMsgStyles['msg-system'];
+    el.style.cssText = 'margin-bottom:12px;padding:12px 16px;border-radius:10px;font-size:' + (s.fontSize || '13px') + ';line-height:1.6;white-space:normal;overflow-wrap:break-word;background:' + s.bg + ';border-left:3px solid ' + s.border + ';' + (s.textAlign ? 'text-align:' + s.textAlign + ';' : '');
+  });
+  container.querySelectorAll('.png-label').forEach(function(el) {
+    var cls = el.parentElement && el.parentElement.getAttribute('data-cls') || '';
+    var s = pngMsgStyles[cls] || pngMsgStyles['msg-system'];
+    el.style.cssText = 'font-size:11px;font-weight:700;margin-bottom:4px;text-transform:uppercase;color:' + s.labelColor + ';font-family:' + font + ';';
+  });
+  container.querySelectorAll('.png-content').forEach(function(el) {
+    el.style.cssText = 'overflow:hidden;font-family:' + font + ';';
+  });
+  container.querySelectorAll('.md-h1').forEach(function(el) { el.style.cssText = 'display:block;font-weight:700;margin:8px 0 4px;color:#a78bfa;font-size:15px;'; });
+  container.querySelectorAll('.md-h2').forEach(function(el) { el.style.cssText = 'display:block;font-weight:700;margin:8px 0 4px;color:#c4b5fd;font-size:14px;'; });
+  container.querySelectorAll('.md-h3').forEach(function(el) { el.style.cssText = 'display:block;font-weight:700;margin:8px 0 4px;color:#ddd6fe;font-size:13px;'; });
+  container.querySelectorAll('.md-table').forEach(function(el) { el.style.cssText = 'border-collapse:collapse;margin:6px 0;width:auto;font-size:12px;white-space:normal;'; });
+  container.querySelectorAll('.md-table th').forEach(function(el) { el.style.cssText = 'border:1px solid #444;padding:4px 8px;text-align:left;background:#2a2a3a;font-weight:600;color:#c4b5fd;'; });
+  container.querySelectorAll('.md-table td').forEach(function(el) { el.style.cssText = 'border:1px solid #444;padding:4px 8px;text-align:left;'; });
+  container.querySelectorAll('.md-codeblock').forEach(function(el) { el.style.cssText = 'background:#0d1117;border:1px solid #333;border-radius:6px;padding:10px 12px;margin:6px 0;overflow-x:auto;font-size:12px;line-height:1.5;white-space:pre;'; });
+  container.querySelectorAll('.md-codeblock code').forEach(function(el) { el.style.cssText = 'background:none;color:#e6edf3;padding:0;border-radius:0;font-size:12px;'; });
+  container.querySelectorAll('.md-blockquote').forEach(function(el) { el.style.cssText = 'display:block;border-left:3px solid #555;padding-left:10px;color:#999;margin:4px 0;'; });
+  container.querySelectorAll('.md-hr').forEach(function(el) { el.style.cssText = 'display:block;border-top:1px solid #444;margin:8px 0;height:0;'; });
+  container.querySelectorAll('.md-li').forEach(function(el) { el.style.cssText = 'display:block;padding-left:1.2em;text-indent:-0.8em;'; });
+  container.querySelectorAll('.md-ol-li').forEach(function(el) { el.style.cssText = 'display:block;padding-left:1.5em;text-indent:-1.2em;'; });
+  // Inline code (not inside codeblock)
+  container.querySelectorAll('code').forEach(function(el) {
+    if (!el.parentElement || !el.parentElement.classList.contains('md-codeblock')) {
+      el.style.cssText = 'background:#1e1e3a;color:#facc15;padding:1px 5px;border-radius:3px;font-size:12px;';
+    }
+  });
+  container.querySelectorAll('strong').forEach(function(el) { el.style.color = '#fff'; });
+  container.querySelectorAll('em').forEach(function(el) { el.style.cssText = 'font-style:italic;color:#d1d5db;'; });
+  container.querySelectorAll('a').forEach(function(el) { el.style.color = '#60a5fa'; });
+}
+
 function buildPNGExportContainer() {
   const indices = Array.from(selectedMsgIndices).sort((a, b) => a - b);
   if (!indices.length) return null;
   const msgs = indices.map(i => {
     const item = transcriptEntriesCache[i];
     if (!item) return '';
-    return '<div class="msg ' + item.cls + '"><div class="msg-label">' + esc(item.label) + '</div><div class="msg-content">' + item.html + '</div></div>';
+    return '<div class="png-msg" data-cls="' + esc(item.cls) + '"><div class="png-label">' + esc(item.label) + '</div><div class="png-content">' + item.html + '</div></div>';
   }).filter(Boolean);
   const container = document.createElement('div');
-  container.style.cssText = 'position:absolute;left:-9999px;top:0;width:800px;background:#1a1a2e;padding:24px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;color:#e0e0e0;';
-  const style = document.createElement('style');
-  style.textContent =
-    '.png-export .msg { margin-bottom:12px;padding:12px 16px;border-radius:10px;font-size:13px;line-height:1.6;white-space:normal;overflow-wrap:break-word; }' +
-    '.png-export .msg-user { background:#1e3a5f;border-left:3px solid #3b82f6; }' +
-    '.png-export .msg-assistant { background:#1a2744;border-left:3px solid #a78bfa; }' +
-    '.png-export .msg-tool { background:#0f0f23;border-left:3px solid #f97316;font-size:12px; }' +
-    '.png-export .msg-system { background:#1a1a2e;border-left:3px solid #6b7280;font-size:12px;text-align:center; }' +
-    '.png-export .msg-label { font-size:11px;font-weight:700;margin-bottom:4px;text-transform:uppercase; }' +
-    '.png-export .msg-user .msg-label { color:#3b82f6; }' +
-    '.png-export .msg-assistant .msg-label { color:#a78bfa; }' +
-    '.png-export .msg-tool .msg-label { color:#f97316; }' +
-    '.png-export .msg-system .msg-label { color:#6b7280; }' +
-    '.png-export .msg-content { overflow:hidden; }' +
-    '.png-export .md-h1,.png-export .md-h2,.png-export .md-h3 { display:block;font-weight:700;margin:8px 0 4px; }' +
-    '.png-export .md-h1 { color:#a78bfa;font-size:15px; }' +
-    '.png-export .md-h2 { color:#c4b5fd;font-size:14px; }' +
-    '.png-export .md-h3 { color:#ddd6fe;font-size:13px; }' +
-    '.png-export .md-table { border-collapse:collapse;margin:6px 0;width:auto;font-size:12px;white-space:normal; }' +
-    '.png-export .md-table th,.png-export .md-table td { border:1px solid #444;padding:4px 8px;text-align:left; }' +
-    '.png-export .md-table th { background:#2a2a3a;font-weight:600;color:#c4b5fd; }' +
-    '.png-export .md-codeblock { background:#0d1117;border:1px solid #333;border-radius:6px;padding:10px 12px;margin:6px 0;overflow-x:auto;font-size:12px;line-height:1.5;white-space:pre; }' +
-    '.png-export .md-codeblock code { background:none;color:#e6edf3;padding:0;border-radius:0;font-size:12px; }' +
-    '.png-export .md-blockquote { display:block;border-left:3px solid #555;padding-left:10px;color:#999;margin:4px 0; }' +
-    '.png-export .md-hr { display:block;border-top:1px solid #444;margin:8px 0;height:0; }' +
-    '.png-export .md-li { display:block;padding-left:1.2em;text-indent:-0.8em; }' +
-    '.png-export .md-ol-li { display:block;padding-left:1.5em;text-indent:-1.2em; }' +
-    '.png-export code { background:#1e1e3a;color:#facc15;padding:1px 5px;border-radius:3px;font-size:12px; }' +
-    '.png-export strong { color:#fff; }' +
-    '.png-export em { font-style:italic;color:#d1d5db; }' +
-    '.png-export a { color:#60a5fa; }';
-  container.appendChild(style);
-  const inner = document.createElement('div');
-  inner.className = 'png-export';
-  inner.innerHTML = msgs.join('');
-  container.appendChild(inner);
+  container.style.cssText = 'position:fixed;left:0;top:0;width:800px;opacity:0;pointer-events:none;z-index:-1;background:#1a1a2e;padding:24px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;color:#e0e0e0;';
+  container.innerHTML = msgs.join('');
+  pngInlineStyles(container);
   container._count = indices.length;
   return container;
 }
 
-function exportSelectedPNG() {
+function renderPNG(mode) {
   if (typeof htmlToImage === 'undefined') {
     showToast('html-to-image not loaded — check network or try again', true);
     return;
@@ -1642,49 +1655,35 @@ function exportSelectedPNG() {
   document.body.appendChild(container);
   showToast('Generating PNG...');
   var opts = { pixelRatio: 2, backgroundColor: '#1a1a2e' };
-  // Warm-up render: first pass loads fonts/styles into SVG context, discard result
-  htmlToImage.toPng(container, opts).then(function() {
-    return htmlToImage.toPng(container, opts);
-  }).then(function(dataUrl) {
-    document.body.removeChild(container);
-    const link = document.createElement('a');
-    const d = new Date();
-    link.download = 'claude-transcript-' + d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0') + '.png';
-    link.href = dataUrl;
-    link.click();
-    showToast('Exported ' + count + ' items as PNG');
-    exitMultiSelect();
-  }).catch(function(err) {
-    try { document.body.removeChild(container); } catch(e) {}
-    showToast('PNG export failed: ' + err.message, true);
-  });
+  // Wait one frame so the browser fully computes layout/styles, then make visible for capture
+  requestAnimationFrame(function() { requestAnimationFrame(function() {
+    container.style.opacity = '1';
+    var p = (mode === 'copy') ? htmlToImage.toBlob(container, opts) : htmlToImage.toPng(container, opts);
+    p.then(function(result) {
+      document.body.removeChild(container);
+      if (mode === 'copy') {
+        return navigator.clipboard.write([new ClipboardItem({ 'image/png': result })]).then(function() {
+          showToast('Copied ' + count + ' items as PNG');
+          exitMultiSelect();
+        });
+      } else {
+        const link = document.createElement('a');
+        const d = new Date();
+        link.download = 'claude-transcript-' + d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0') + '.png';
+        link.href = result;
+        link.click();
+        showToast('Exported ' + count + ' items as PNG');
+        exitMultiSelect();
+      }
+    }).catch(function(err) {
+      try { document.body.removeChild(container); } catch(e) {}
+      showToast((mode === 'copy' ? 'Copy' : 'Export') + ' PNG failed: ' + err.message, true);
+    });
+  }); });
 }
 
-function copySelectedPNG() {
-  if (typeof htmlToImage === 'undefined') {
-    showToast('html-to-image not loaded — check network or try again', true);
-    return;
-  }
-  const container = buildPNGExportContainer();
-  if (!container) return;
-  const count = container._count;
-  document.body.appendChild(container);
-  showToast('Generating PNG...');
-  var opts = { pixelRatio: 2, backgroundColor: '#1a1a2e' };
-  // Warm-up render: first pass loads fonts/styles into SVG context, discard result
-  htmlToImage.toBlob(container, opts).then(function() {
-    return htmlToImage.toBlob(container, opts);
-  }).then(function(blob) {
-    document.body.removeChild(container);
-    return navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(function() {
-      showToast('Copied ' + count + ' items as PNG');
-      exitMultiSelect();
-    });
-  }).catch(function(err) {
-    try { document.body.removeChild(container); } catch(e) {}
-    showToast('Copy PNG failed: ' + err.message, true);
-  });
-}
+function exportSelectedPNG() { renderPNG('export'); }
+function copySelectedPNG() { renderPNG('copy'); }
 
 function showToast(msg, isError) {
   const el = document.getElementById('toast');
