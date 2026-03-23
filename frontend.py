@@ -754,7 +754,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <div id="permCards"></div>
     <div class="transcript-view" id="transcriptView"></div>
   </div>
-  <div id="noPromptMsg" style="display:none;padding:12px 16px;color:#888;font-size:13px;font-style:italic;text-align:center;border-top:1px solid #333">Read-only session: prompt input will be available after the session hook registers a terminal</div>
+  <div id="noPromptMsg" style="display:none;padding:12px 16px;color:#888;font-size:13px;font-style:italic;text-align:center;border-top:1px solid #333">Read-only: this session was restored from transcript history and has no terminal connection. Send a new prompt in Claude Code to enable input here.</div>
   <div class="prompt-area" id="promptArea">
     <div class="prompt-row">
       <textarea class="prompt-input" id="promptInput" placeholder="Type a prompt... Ctrl+Enter to send" rows="1" oninput="autoResize(this)"></textarea>
@@ -956,7 +956,7 @@ function buildCardHTML(s) {
     html += '</div>';
   }
   if (s.prompt_capable === false) {
-    html += '<div class="sc-no-prompt" onclick="event.stopPropagation()" style="padding:6px 10px;color:#888;font-size:12px;font-style:italic">Read-only: waiting for session hook to register terminal</div>';
+    html += '<div class="sc-no-prompt" onclick="event.stopPropagation()" style="padding:6px 10px;color:#888;font-size:12px;font-style:italic">Read-only: no terminal connection (restored from history). Send a new prompt in Claude Code to enable input.</div>';
   } else {
     var disabled = state !== 'idle';
     html += '<div class="sc-prompt-row" onclick="event.stopPropagation()">';
