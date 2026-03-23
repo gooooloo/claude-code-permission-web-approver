@@ -723,8 +723,8 @@ HTML_PAGE = """<!DOCTYPE html>
     .buttons button { flex: 1 1 calc(50% - 8px); min-width: 80px; }
   }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-<script>if(typeof html2canvas==='undefined'){var s=document.createElement('script');s.src='https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js';document.head.appendChild(s);}</script>
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js"></script>
+<script>if(typeof htmlToImage==='undefined'){var s=document.createElement('script');s.src='https://unpkg.com/html-to-image@1.11.13/dist/html-to-image.js';document.head.appendChild(s);}</script>
 </head>
 <body>
 <div class="header">
@@ -1582,14 +1582,9 @@ function exportSelectedHTML() {
   exitMultiSelect();
 }
 
-function renderSelectedToPNGCanvas(callback) {
-  if (typeof html2canvas === 'undefined') {
-    showToast('html2canvas not loaded — check network or try again', true);
-    callback(new Error('html2canvas not loaded'), null, 0);
-    return;
-  }
+function buildPNGExportContainer() {
   const indices = Array.from(selectedMsgIndices).sort((a, b) => a - b);
-  if (!indices.length) return;
+  if (!indices.length) return null;
   const msgs = indices.map(i => {
     const item = transcriptEntriesCache[i];
     if (!item) return '';
@@ -1632,55 +1627,54 @@ function renderSelectedToPNGCanvas(callback) {
   inner.className = 'png-export';
   inner.innerHTML = msgs.join('');
   container.appendChild(inner);
-  document.body.appendChild(container);
-  showToast('Generating PNG...');
-  var done = false;
-  var timer = setTimeout(function() {
-    if (done) return;
-    done = true;
-    try { document.body.removeChild(container); } catch(e) {}
-    showToast('PNG generation timed out — try selecting fewer messages', true);
-    callback(new Error('timeout'), null, indices.length);
-  }, 30000);
-  html2canvas(container, { backgroundColor: '#1a1a2e', scale: 2, useCORS: true, logging: false }).then(canvas => {
-    if (done) return;
-    done = true;
-    clearTimeout(timer);
-    document.body.removeChild(container);
-    callback(null, canvas, indices.length);
-  }).catch(err => {
-    if (done) return;
-    done = true;
-    clearTimeout(timer);
-    document.body.removeChild(container);
-    callback(err, null, indices.length);
-  });
+  container._count = indices.length;
+  return container;
 }
 
 function exportSelectedPNG() {
-  renderSelectedToPNGCanvas(function(err, canvas, count) {
-    if (err) { showToast('PNG export failed: ' + err.message, true); return; }
+  if (typeof htmlToImage === 'undefined') {
+    showToast('html-to-image not loaded — check network or try again', true);
+    return;
+  }
+  const container = buildPNGExportContainer();
+  if (!container) return;
+  const count = container._count;
+  document.body.appendChild(container);
+  showToast('Generating PNG...');
+  htmlToImage.toPng(container, { pixelRatio: 2, backgroundColor: '#1a1a2e' }).then(function(dataUrl) {
+    document.body.removeChild(container);
     const link = document.createElement('a');
     const d = new Date();
     link.download = 'claude-transcript-' + d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0') + '.png';
-    link.href = canvas.toDataURL('image/png');
+    link.href = dataUrl;
     link.click();
     showToast('Exported ' + count + ' items as PNG');
     exitMultiSelect();
+  }).catch(function(err) {
+    try { document.body.removeChild(container); } catch(e) {}
+    showToast('PNG export failed: ' + err.message, true);
   });
 }
 
 function copySelectedPNG() {
-  renderSelectedToPNGCanvas(function(err, canvas, count) {
-    if (err) { showToast('Copy PNG failed: ' + err.message, true); return; }
-    canvas.toBlob(function(blob) {
-      navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(function() {
-        showToast('Copied ' + count + ' items as PNG');
-        exitMultiSelect();
-      }).catch(function(e) {
-        showToast('Copy PNG failed: ' + e.message, true);
-      });
-    }, 'image/png');
+  if (typeof htmlToImage === 'undefined') {
+    showToast('html-to-image not loaded — check network or try again', true);
+    return;
+  }
+  const container = buildPNGExportContainer();
+  if (!container) return;
+  const count = container._count;
+  document.body.appendChild(container);
+  showToast('Generating PNG...');
+  htmlToImage.toBlob(container, { pixelRatio: 2, backgroundColor: '#1a1a2e' }).then(function(blob) {
+    document.body.removeChild(container);
+    return navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(function() {
+      showToast('Copied ' + count + ' items as PNG');
+      exitMultiSelect();
+    });
+  }).catch(function(err) {
+    try { document.body.removeChild(container); } catch(e) {}
+    showToast('Copy PNG failed: ' + err.message, true);
   });
 }
 
