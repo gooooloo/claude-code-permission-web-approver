@@ -56,6 +56,8 @@ sessions = {}
 #     "derived_state": str,        # idle|busy|permission_prompt|elicitation|plan_review
 #     "last_activity": float,
 #     "last_summary": str,         # brief summary of last assistant message
+#     "slug": str,                 # session slug from transcript (auto-generated name)
+#     "custom_title": str,         # user-set name via /rename in Claude Code (from transcript custom-title entry)
 # }
 
 sessions_lock = threading.Lock()
@@ -199,6 +201,12 @@ def _update_session_state_locked(sid):
                 s["transcript_offset"] = offset + bytes_consumed
                 s["transcript_entries"].extend(new_entries)
                 s["last_activity"] = time.time()
+                # Extract slug (first seen) and custom title (latest /rename)
+                for e in new_entries:
+                    if e.get("slug") and not s["slug"]:
+                        s["slug"] = e["slug"]
+                    if e.get("type") == "custom-title" and e.get("customTitle"):
+                        s["custom_title"] = e["customTitle"]
 
     # Always derive state — .request.json is an external signal independent of transcript changes
     with sessions_lock:
@@ -556,6 +564,8 @@ class WebUIHandler(BaseHTTPRequestHandler):
                         "last_activity": s["last_activity"],
                         "registered_at": s["registered_at"],
                         "prompt_capable": can_prompt,
+                        "slug": s.get("slug", ""),
+                        "custom_title": s.get("custom_title", ""),
                     }
                     # Attach pending request if in permission_prompt state
                     if s["derived_state"] == "permission_prompt":
@@ -749,6 +759,8 @@ class WebUIHandler(BaseHTTPRequestHandler):
                         "last_activity": time.time(),
                         "last_summary": "",
                         "last_user_prompt": "",
+                        "slug": "",
+                        "custom_title": "",
                     }
                 else:
                     # resume/clear/compact — update path and reset offset
@@ -1132,6 +1144,8 @@ def _restore_sessions_from_terminal_mappings():
                 "last_activity": now,
                 "last_summary": "",
                 "last_user_prompt": "",
+                "slug": "",
+                "custom_title": "",
             }
         print(f"[*] Restored session from terminal mapping: {session_id} terminal={terminal_id}")
 
@@ -1255,6 +1269,8 @@ def scan_existing_sessions():
                         "last_activity": time.time(),
                         "last_summary": "",
                         "last_user_prompt": "",
+                        "slug": "",
+                        "custom_title": "",
                     }
                 print(f"[*] Auto-discovered session: {session_id} terminal={pane_id} cwd={cwd}")
 

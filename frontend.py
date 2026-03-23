@@ -1001,7 +1001,10 @@ async function fetchSessions() {
     const data = await res.json();
     serverName = data.name || 'local';
     federationRemoteNames = data.remote_names || [];
-    renderDashboard(data.sessions || []);
+    var ss = data.sessions || [];
+    window._sessionSlugMap = {};
+    ss.forEach(function(s) { var n = s.custom_title || s.slug; if (n) window._sessionSlugMap[s.session_id] = n; });
+    renderDashboard(ss);
   } catch (e) {
     // connection error, silently retry on next poll
   }
@@ -1020,7 +1023,7 @@ function buildCardHTML(s) {
   if (time) html += '<span class="sc-time">' + time + '</span>';
   html += '</div>';
   html += '<div class="sc-body">';
-  html += '<div class="sc-sid-row"><span class="sc-sid" style="cursor:pointer" onclick="event.stopPropagation();openSession(\\'' + esc(s.session_id) + '\\')">' + esc(s.session_id) + '</span></div>';
+  html += '<div class="sc-sid-row"><span class="sc-sid" style="cursor:pointer" onclick="event.stopPropagation();openSession(\\'' + esc(s.session_id) + '\\')">' + esc(s.custom_title || s.slug || s.session_id) + '</span></div>';
   if (userPrompt) html += '<div class="sc-user-prompt">' + userPrompt + '</div>';
   if (s.last_summary) html += '<div class="sc-summary">' + renderMarkdown(s.last_summary) + '</div>';
   if (state === 'permission_prompt' && s.pending_request) {
@@ -1053,7 +1056,7 @@ function buildCardHTML(s) {
 }
 
 function cardHash(s) {
-  return (s.state||'') + ':' + (s.last_summary||'') + ':' + (s.last_user_prompt||'') + ':' + (s.last_activity||'') + ':' + (s.pending_request ? s.pending_request.id : '');
+  return (s.state||'') + ':' + (s.last_summary||'') + ':' + (s.last_user_prompt||'') + ':' + (s.last_activity||'') + ':' + (s.pending_request ? s.pending_request.id : '') + ':' + (s.custom_title||s.slug||'');
 }
 
 function _updateOrCreateCard(existingById, s, mgHidden) {
@@ -1250,7 +1253,8 @@ function openSession(sid) {
   document.getElementById('backBtn').style.display = 'flex';
   document.getElementById('scrollBottomBtn').style.display = 'flex';
   document.getElementById('collapseAllBtn').style.display = 'none';
-  document.getElementById('pageTitle').textContent = titlePrefix() + 'Session ' + sid;
+  var sessionLabel = (window._sessionSlugMap && window._sessionSlugMap[sid]) || sid;
+  document.getElementById('pageTitle').textContent = titlePrefix() + sessionLabel;
   document.getElementById('transcriptView').innerHTML = '';
   document.getElementById('permCards').innerHTML = '';
   lastPermCardId = '';
@@ -1307,7 +1311,9 @@ async function fetchSessionDetail() {
     const titleEl = document.getElementById('pageTitle');
     const stateColor = {idle: '#4ade80', busy: '#facc15', permission_prompt: '#f87171', elicitation: '#60a5fa', plan_review: '#c084fc'}[state] || '#a78bfa';
     const stateWord = {idle: 'Idle', busy: 'Busy', permission_prompt: 'Ask', elicitation: 'Ask', plan_review: 'Plan'}[state] || '';
-    titleEl.textContent = titlePrefix() + currentSessionId + ' ' + stateWord;
+    var sessionLabel = session.custom_title || session.slug || currentSessionId;
+    if (sessionLabel !== currentSessionId) window._sessionSlugMap[currentSessionId] = sessionLabel;
+    titleEl.textContent = titlePrefix() + sessionLabel + ' ' + stateWord;
     titleEl.style.color = stateColor;
 
     // Show read-only message or prompt area depending on prompt capability
