@@ -1003,7 +1003,10 @@ async function fetchSessions() {
     federationRemoteNames = data.remote_names || [];
     var ss = data.sessions || [];
     window._sessionSlugMap = {};
-    ss.forEach(function(s) { if (s.custom_title) window._sessionSlugMap[s.session_id] = s.custom_title; });
+    ss.forEach(function(s) {
+      var p = (s.cwd || '').split('/').pop() || '?';
+      window._sessionSlugMap[s.session_id] = s.custom_title ? p + ' (' + s.custom_title + ')' : p;
+    });
     renderDashboard(ss);
   } catch (e) {
     // connection error, silently retry on next poll
@@ -1253,7 +1256,7 @@ function openSession(sid) {
   document.getElementById('backBtn').style.display = 'flex';
   document.getElementById('scrollBottomBtn').style.display = 'flex';
   document.getElementById('collapseAllBtn').style.display = 'none';
-  var sessionLabel = (window._sessionSlugMap && window._sessionSlugMap[sid]) || 'Session ' + sid;
+  var sessionLabel = (window._sessionSlugMap && window._sessionSlugMap[sid]) || sid;
   document.getElementById('pageTitle').textContent = titlePrefix() + sessionLabel;
   document.getElementById('transcriptView').innerHTML = '';
   document.getElementById('permCards').innerHTML = '';
@@ -1311,8 +1314,9 @@ async function fetchSessionDetail() {
     const titleEl = document.getElementById('pageTitle');
     const stateColor = {idle: '#4ade80', busy: '#facc15', permission_prompt: '#f87171', elicitation: '#60a5fa', plan_review: '#c084fc'}[state] || '#a78bfa';
     const stateWord = {idle: 'Idle', busy: 'Busy', permission_prompt: 'Ask', elicitation: 'Ask', plan_review: 'Plan'}[state] || '';
-    var sessionLabel = session.custom_title || currentSessionId;
-    if (sessionLabel !== currentSessionId) window._sessionSlugMap[currentSessionId] = sessionLabel;
+    var p = (session.cwd || '').split('/').pop() || '?';
+    var sessionLabel = session.custom_title ? p + ' (' + session.custom_title + ')' : p;
+    window._sessionSlugMap[currentSessionId] = sessionLabel;
     titleEl.textContent = titlePrefix() + sessionLabel + ' ' + stateWord;
     titleEl.style.color = stateColor;
 
