@@ -15,7 +15,7 @@ import sys
 import glob
 import urllib.request
 
-from platform_utils import get_queue_dir, find_claude_pid
+from platform_utils import get_queue_dir, find_claude_pid, IS_WINDOWS
 
 SERVER = "http://127.0.0.1:19836"
 QUEUE_DIR = get_queue_dir()
@@ -53,6 +53,13 @@ def main():
         urllib.request.urlopen(req, timeout=3)
     except Exception:
         pass
+
+    # Clean up terminal mapping file (Windows only)
+    if IS_WINDOWS:
+        try:
+            os.remove(os.path.join(QUEUE_DIR, "terminals", f"{session_id}.json"))
+        except OSError:
+            pass
 
     # Local fallback cleanup: delete request/response files belonging to this session
     if os.path.isdir(QUEUE_DIR):

@@ -440,3 +440,106 @@ class TestUserPromptExtraction:
         _, _, prompt = server._derive_state("s1", server.sessions["s1"])
         assert "First part." in prompt
         assert "Second part." in prompt
+
+
+# ── _restore_sessions_from_terminal_mappings (Windows terminal mapping) ──
+
+
+class TestScanSessionsFromTranscripts:
+    """Tests for restoring sessions from terminal mapping files."""
+
+    def setup_method(self):
+        server.sessions.clear()
+
+    def test_restores_session_with_live_shell(self, tmp_path):
+        """Mapping file with alive shell PID → session registered with terminal_id."""
+        terminals_dir = tmp_path / "terminals"
+        terminals_dir.mkdir()
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text("{}\n")
+
+        mapping = {
+            "terminal_id": str(os.getpid()),  # current process, guaranteed alive
+            "transcript_path": str(transcript),
+            "cwd": str(tmp_path),
+        }
+        (terminals_dir / "12345.json").write_text(json.dumps(mapping))
+
+        with mock.patch.object(server, "QUEUE_DIR", str(tmp_path)):
+            server._restore_sessions_from_terminal_mappings()
+
+        assert "12345" in server.sessions
+        assert server.sessions["12345"]["terminal_id"] == str(os.getpid())
+        assert server.sessions["12345"]["transcript_path"] == str(transcript)
+        assert server.sessions["12345"]["cwd"] == str(tmp_path)
+
+    def test_skips_dead_shell_and_cleans_up(self, tmp_path):
+        """Mapping file with dead shell PID → skipped, mapping file removed."""
+        terminals_dir = tmp_path / "terminals"
+        terminals_dir.mkdir()
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text("{}\n")
+
+        mapping = {
+            "terminal_id": "99999999",  # very unlikely to be alive
+            "transcript_path": str(transcript),
+            "cwd": str(tmp_path),
+        }
+        mapping_file = terminals_dir / "12345.json"
+        mapping_file.write_text(json.dumps(mapping))
+
+        with mock.patch.object(server, "QUEUE_DIR", str(tmp_path)), \
+             mock.patch.object(server, "is_process_alive", return_value=False):
+            server._restore_sessions_from_terminal_mappings()
+
+        assert "12345" not in server.sessions
+        assert not mapping_file.exists()
+
+    def test_skips_missing_transcript_and_cleans_up(self, tmp_path):
+        """Mapping file pointing to nonexistent transcript → skipped, mapping file removed."""
+        terminals_dir = tmp_path / "terminals"
+        terminals_dir.mkdir()
+
+        mapping = {
+            "terminal_id": str(os.getpid()),
+            "transcript_path": "/nonexistent/transcript.jsonl",
+            "cwd": str(tmp_path),
+        }
+        mapping_file = terminals_dir / "12345.json"
+        mapping_file.write_text(json.dumps(mapping))
+
+        with mock.patch.object(server, "QUEUE_DIR", str(tmp_path)):
+            server._restore_sessions_from_terminal_mappings()
+
+        assert "12345" not in server.sessions
+        assert not mapping_file.exists()
+
+    def test_skips_already_registered_session(self, tmp_path):
+        """Session already in registry → not overwritten."""
+        terminals_dir = tmp_path / "terminals"
+        terminals_dir.mkdir()
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text("{}\n")
+
+        mapping = {
+            "terminal_id": str(os.getpid()),
+            "transcript_path": str(transcript),
+            "cwd": str(tmp_path),
+        }
+        (terminals_dir / "12345.json").write_text(json.dumps(mapping))
+
+        # Pre-register with different terminal_id
+        setup_session("12345", [])
+        server.sessions["12345"]["terminal_id"] = "original"
+
+        with mock.patch.object(server, "QUEUE_DIR", str(tmp_path)):
+            server._restore_sessions_from_terminal_mappings()
+
+        assert server.sessions["12345"]["terminal_id"] == "original"
+
+    def test_no_terminals_dir(self, tmp_path):
+        """No terminals directory → no-op, no error."""
+        with mock.patch.object(server, "QUEUE_DIR", str(tmp_path)):
+            server._restore_sessions_from_terminal_mappings()  # should not raise
+
+        assert len(server.sessions) == 0

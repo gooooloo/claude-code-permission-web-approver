@@ -73,6 +73,22 @@ def main():
         body_dict["terminal_id"] = os.environ.get("TMUX_PANE", "")
         body_dict["tmux_socket"] = os.environ.get("TMUX", "")
 
+    # On Windows, persist session→terminal mapping so the server can restore
+    # sessions with prompt delivery capability after a restart.
+    if IS_WINDOWS:
+        terminals_dir = os.path.join(QUEUE_DIR, "terminals")
+        os.makedirs(terminals_dir, exist_ok=True)
+        try:
+            mapping = {
+                "terminal_id": body_dict["terminal_id"],
+                "transcript_path": transcript_path,
+                "cwd": project_dir,
+            }
+            with open(os.path.join(terminals_dir, f"{session_id}.json"), "w") as f:
+                json.dump(mapping, f)
+        except OSError:
+            pass
+
     body = json.dumps(body_dict).encode()
 
     try:

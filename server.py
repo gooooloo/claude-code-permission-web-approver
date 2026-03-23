@@ -512,7 +512,7 @@ def zombie_cleanup_loop():
         # the hook subprocess, killing it before the POST completes).
         if IS_WINDOWS:
             try:
-                _scan_sessions_from_transcripts()
+                _restore_sessions_from_terminal_mappings()
             except Exception:
                 pass
 
@@ -1065,55 +1065,77 @@ class WebUIHandler(BaseHTTPRequestHandler):
             print(f"[!] Failed to update settings: {e}")
 
 
-def _scan_sessions_from_transcripts():
-    """Discover sessions by scanning ~/.claude/projects/ for recent transcript files.
+def _restore_sessions_from_terminal_mappings():
+    """Discover sessions from saved terminal mapping files (Windows only).
 
-    Used on Windows where tmux is not available. Registers sessions as read-only
-    (no terminal_id for prompt delivery) until the next hook fires.
+    The SessionStart hook saves {terminal_id, transcript_path, cwd} to
+    QUEUE_DIR/terminals/<session_id>.json.  On server start (and periodically),
+    we read these files and register any session whose shell PID is still alive.
+    This gives restored sessions full prompt delivery capability.
     """
-    home = os.path.expanduser("~")
-    projects_dir = os.path.join(home, ".claude", "projects")
-    if not os.path.isdir(projects_dir):
+    terminals_dir = os.path.join(QUEUE_DIR, "terminals")
+    if not os.path.isdir(terminals_dir):
         return
 
     now = time.time()
-    for proj in os.listdir(projects_dir):
-        proj_path = os.path.join(projects_dir, proj)
-        if not os.path.isdir(proj_path):
+    for fname in os.listdir(terminals_dir):
+        if not fname.endswith(".json"):
             continue
-        for jsonl_file in glob.glob(os.path.join(proj_path, "*.jsonl")):
-            try:
-                mtime = os.path.getmtime(jsonl_file)
-            except OSError:
-                continue
-            # Only consider transcripts modified in last 2 hours
-            if now - mtime > 7200:
+        session_id = fname[:-5]  # strip .json
+        fpath = os.path.join(terminals_dir, fname)
+
+        with sessions_lock:
+            if session_id in sessions:
                 continue
 
-            session_id = os.path.splitext(os.path.basename(jsonl_file))[0]
-            with sessions_lock:
-                if session_id in sessions:
-                    continue
-                sessions[session_id] = {
-                    "transcript_path": jsonl_file,
-                    "terminal_id": "",
-                    "tmux_socket": "",
-                    "cwd": proj_path,
-                    "registered_at": now,
-                    "transcript_offset": 0,
-                    "transcript_entries": [],
-                    "derived_state": "busy",
-                    "last_activity": now,
-                    "last_summary": "",
-                    "last_user_prompt": "",
-                }
-            print(f"[*] Auto-discovered session: {session_id} project={proj}")
+        try:
+            with open(fpath) as f:
+                mapping = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        terminal_id = mapping.get("terminal_id", "")
+        transcript_path = mapping.get("transcript_path", "")
+
+        # Skip if shell process is dead
+        if not terminal_id or not is_process_alive(int(terminal_id)):
+            try:
+                os.remove(fpath)
+            except OSError:
+                pass
+            continue
+
+        # Skip if transcript file is gone
+        if not transcript_path or not os.path.isfile(transcript_path):
+            try:
+                os.remove(fpath)
+            except OSError:
+                pass
+            continue
+
+        with sessions_lock:
+            if session_id in sessions:
+                continue
+            sessions[session_id] = {
+                "transcript_path": transcript_path,
+                "terminal_id": terminal_id,
+                "tmux_socket": "",
+                "cwd": mapping.get("cwd", ""),
+                "registered_at": now,
+                "transcript_offset": 0,
+                "transcript_entries": [],
+                "derived_state": "busy",
+                "last_activity": now,
+                "last_summary": "",
+                "last_user_prompt": "",
+            }
+        print(f"[*] Restored session from terminal mapping: {session_id} terminal={terminal_id}")
 
 
 def scan_existing_sessions():
     """Scan tmux panes for running claude processes and register them."""
     if IS_WINDOWS:
-        _scan_sessions_from_transcripts()
+        _restore_sessions_from_terminal_mappings()
         return
 
     # Find all tmux sockets
