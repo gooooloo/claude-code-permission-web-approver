@@ -1778,7 +1778,7 @@ function pngInlineStyles(container) {
     el.style.cssText = 'font-size:11px;font-weight:700;margin-bottom:4px;text-transform:uppercase;color:' + s.labelColor + ';font-family:' + font + ';';
   });
   container.querySelectorAll('.png-content').forEach(function(el) {
-    el.style.cssText = 'overflow:hidden;font-family:' + font + ';';
+    el.style.cssText = 'overflow:hidden;white-space:pre-wrap;overflow-wrap:break-word;font-family:' + font + ';';
   });
   container.querySelectorAll('.md-h1').forEach(function(el) { el.style.cssText = 'display:block;font-weight:700;margin:8px 0 4px;color:#a78bfa;font-size:15px;'; });
   container.querySelectorAll('.md-h2').forEach(function(el) { el.style.cssText = 'display:block;font-weight:700;margin:8px 0 4px;color:#c4b5fd;font-size:14px;'; });
