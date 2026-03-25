@@ -346,9 +346,10 @@ def main():
 
     os.makedirs(QUEUE_DIR, exist_ok=True)
 
-    # Read input
+    # Read input — use binary mode to avoid encoding issues on Windows
+    # (sys.stdin defaults to locale encoding e.g. CP936, not UTF-8)
     try:
-        input_data = json.loads(sys.stdin.read())
+        input_data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     except (json.JSONDecodeError, ValueError):
         input_data = {}
 

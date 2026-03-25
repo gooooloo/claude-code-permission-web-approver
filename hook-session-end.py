@@ -30,7 +30,7 @@ def main():
         signal.signal(signal.SIGINT, signal.SIG_IGN)
 
     try:
-        input_data = json.loads(sys.stdin.read())
+        input_data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     except (json.JSONDecodeError, ValueError):
         input_data = {}
 
