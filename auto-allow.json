@@ -1,0 +1,14 @@
+{
+  "rules": [
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "git checkout"
+    }
+  ],
+  "smart_rules": {
+    "readonly_tools": "allow",
+    "readonly_bash": "allow",
+    "project_internal_edit": "allow"
+  }
+}

@@ -741,6 +741,62 @@ HTML_PAGE = """<!DOCTYPE html>
   em { font-style: italic; color: #d1d5db; }
   a { color: #60a5fa; }
 
+  /* ── Permissions management ── */
+  .perm-level { margin-bottom: 20px; }
+  .perm-level-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; background: #1e1e3a; border-radius: 8px 8px 0 0;
+    border: 1px solid #333; cursor: pointer; user-select: none;
+  }
+  .perm-level-header:hover { background: #252548; }
+  .perm-level-title { font-weight: 700; color: #c4b5fd; font-size: 14px; }
+  .perm-level-badge { font-size: 11px; color: #888; background: #2a2a4a; padding: 2px 8px; border-radius: 10px; }
+  .perm-level-body {
+    border: 1px solid #333; border-top: none; border-radius: 0 0 8px 8px;
+    padding: 12px; background: #16162a;
+  }
+  .perm-rule-row {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+    border-radius: 6px; margin-bottom: 4px;
+  }
+  .perm-rule-row:hover { background: #1e1e3a; }
+  .perm-rule-tool { font-weight: 600; color: #a78bfa; min-width: 60px; font-size: 13px; }
+  .perm-rule-prefix { color: #d1d5db; font-size: 13px; flex: 1; font-family: monospace; }
+  .perm-rule-action {
+    font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600;
+  }
+  .perm-rule-action.allow { background: #16a34a33; color: #4ade80; }
+  .perm-rule-action.deny { background: #ef444433; color: #f87171; }
+  .perm-rule-actions { display: flex; gap: 4px; }
+  .perm-rule-actions button {
+    padding: 3px 8px; font-size: 11px; background: #333; color: #aaa;
+    border-radius: 4px;
+  }
+  .perm-rule-actions button:hover { background: #444; color: #fff; }
+  .perm-smart-row {
+    display: flex; align-items: center; gap: 10px; padding: 6px 8px;
+    margin-bottom: 4px;
+  }
+  .perm-smart-label { color: #d1d5db; font-size: 13px; flex: 1; }
+  .perm-smart-toggle {
+    padding: 3px 10px; font-size: 11px; border-radius: 4px; font-weight: 600; cursor: pointer;
+  }
+  .perm-smart-toggle.allow { background: #16a34a33; color: #4ade80; border: 1px solid #16a34a55; }
+  .perm-smart-toggle.deny { background: #ef444433; color: #f87171; border: 1px solid #ef444455; }
+  .perm-smart-toggle.off { background: #333; color: #666; border: 1px solid #444; }
+  .perm-add-form {
+    display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap;
+  }
+  .perm-add-form select, .perm-add-form input {
+    background: #1e1e3a; border: 1px solid #444; color: #ddd; border-radius: 4px;
+    padding: 4px 8px; font-size: 12px;
+  }
+  .perm-add-form input { flex: 1; min-width: 120px; }
+  .perm-add-form button {
+    padding: 4px 12px; font-size: 12px; background: #3b82f6; color: white; border-radius: 4px;
+  }
+  .perm-section-label { color: #888; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin: 10px 0 6px; }
+
   @media (max-width: 600px) {
     .container { padding: 8px 12px; }
     .header { padding: 10px 12px; gap: 8px; }
@@ -765,6 +821,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <div class="header">
   <button class="back-btn" id="backBtn" onclick="showDashboard()">Back</button>
   <h1 id="pageTitle" ondblclick="window.scrollTo({top:0,behavior:'smooth'})">Claude Sessions</h1>
+  <button class="btn-scroll-bottom" id="permissionsBtn" onclick="showPermissions()" style="display:flex;background:#4b5563">Permissions</button>
   <button class="btn-scroll-bottom" id="collapseAllBtn" onclick="collapseAll()" style="display:flex">Collapse All</button>
   <button class="btn-scroll-bottom" id="scrollBottomBtn" onclick="window.scrollTo({top:document.documentElement.scrollHeight,behavior:'smooth'})">Bottom</button>
 </div>
@@ -772,6 +829,11 @@ HTML_PAGE = """<!DOCTYPE html>
 <!-- Dashboard view -->
 <div class="container dashboard" id="dashboardView">
   <div id="sessionList"></div>
+</div>
+
+<!-- Permissions management view -->
+<div class="container" id="permissionsView" style="display:none">
+  <div id="permissionsContent"></div>
 </div>
 
 <!-- Session detail view -->
@@ -1254,9 +1316,11 @@ function openSession(sid) {
   location.hash = 'session/' + sid;
   document.getElementById('dashboardView').style.display = 'none';
   document.getElementById('detailView').style.display = 'block';
+  document.getElementById('permissionsView').style.display = 'none';
   document.getElementById('backBtn').style.display = 'flex';
   document.getElementById('scrollBottomBtn').style.display = 'flex';
   document.getElementById('collapseAllBtn').style.display = 'none';
+  document.getElementById('permissionsBtn').style.display = 'flex';
   var sessionLabel = (window._sessionSlugMap && window._sessionSlugMap[sid]) || sid;
   document.getElementById('pageTitle').textContent = titlePrefix() + sessionLabel;
   document.getElementById('transcriptView').innerHTML = '';
@@ -1275,9 +1339,11 @@ function showDashboard() {
   location.hash = '';
   document.getElementById('dashboardView').style.display = 'block';
   document.getElementById('detailView').style.display = 'none';
+  document.getElementById('permissionsView').style.display = 'none';
   document.getElementById('backBtn').style.display = 'none';
   document.getElementById('scrollBottomBtn').style.display = 'none';
   document.getElementById('collapseAllBtn').style.display = 'flex';
+  document.getElementById('permissionsBtn').style.display = 'flex';
   document.getElementById('pageTitle').textContent = titlePrefix() + 'Claude Sessions';
   document.getElementById('pageTitle').style.color = '#a78bfa';
   stopDetailPolling();
@@ -1417,44 +1483,35 @@ function renderPermCards(session) {
     if (pr.detail) html += '<div class="perm-detail">' + esc(pr.detail) + '</div>';
     if (pr.detail_sub) html += '<div class="perm-sub">' + esc(pr.detail_sub) + '</div>';
 
-    // Allow info
-    const hasMulti = pr.allow_patterns && pr.allow_patterns.length > 1;
-    if (hasMulti) {
-      html += '<div class="allow-info">"Always Allow All" will apply to: ' +
-        pr.allow_patterns.map(p => '<code>' + esc(p) + '</code>').join(', ') + '</div>';
+    // Allow info — show rule that will be saved
+    const hasMultiRules = pr.allow_rules && pr.allow_rules.length > 1;
+    if (hasMultiRules) {
+      html += '<div class="allow-info">"Always Allow All" will save: ' +
+        pr.allow_rules.map(r => '<code>' + esc(r.prefix ? r.tool + ': ' + r.prefix : r.tool) + '</code>').join(', ') + '</div>';
     } else {
-      html += '<div class="allow-info">"Always Allow" will apply to: <code>' + esc(pr.allow_pattern || '') + '</code></div>';
+      const rule = (pr.allow_rules && pr.allow_rules[0]) || pr.allow_rule || {};
+      const display = rule.prefix ? rule.tool + ': ' + rule.prefix : (rule.tool || pr.allow_pattern || '');
+      html += '<div class="allow-info">"Always Allow" will save: <code>' + esc(display) + '</code></div>';
     }
 
-    // Session-allow info for Read/Edit/Write
-    if (['Read','Edit','Write'].includes(pr.tool_name)) {
-      html += '<div class="allow-info">"Allow this session" will auto-approve all <code>' + esc(pr.tool_name) + '</code> calls in session ' + esc(String(pr.session_id)) + '</div>';
-    }
+    // Session-allow info
+    const normalizedTool = (pr.tool_name || '').replace('mcp__acp__', '');
+    html += '<div class="allow-info">"Allow this session" will auto-approve all <code>' + esc(normalizedTool) + '</code> calls this session</div>';
 
-    // Path select area for Edit/Write
-    if (['Edit','Write'].includes(pr.tool_name)) {
-      html += '<div class="path-select-area" id="path-area-' + esc(pr.id) + '" style="display:none"></div>';
-    }
-
-    // Split patterns area
-    if (hasMulti) {
+    // Split rules area (compound Bash)
+    if (hasMultiRules) {
       html += '<div class="path-select-area" id="split-area-' + esc(pr.id) + '" style="display:none"></div>';
     }
 
     html += '<div class="buttons">';
     html += '<button class="' + denyClass + '" onclick="respond(\\'' + esc(pr.id) + '\\',\\'deny\\',this)">Deny</button>';
-    if (hasMulti) {
+    if (hasMultiRules) {
       html += '<button class="btn-always" onclick="respondAlwaysAll(\\'' + esc(pr.id) + '\\',this)">Always Allow All</button>';
-      html += '<button class="btn-always" style="background:#0d9488" onclick="toggleSplitPatterns(\\'' + esc(pr.id) + '\\')">Allow Command...</button>';
+      html += '<button class="btn-always" style="background:#0d9488" onclick="toggleSplitRules(\\'' + esc(pr.id) + '\\')">Allow Command...</button>';
     } else {
       html += '<button class="btn-always" onclick="respond(\\'' + esc(pr.id) + '\\',\\'always\\',this)">Always Allow</button>';
     }
-    if (['Edit','Write'].includes(pr.tool_name)) {
-      html += '<button class="btn-allow-path" onclick="togglePathSelect(\\'' + esc(pr.id) + '\\')">Allow Path</button>';
-    }
-    if (['Read','Edit','Write'].includes(pr.tool_name)) {
-      html += '<button class="btn-session" onclick="respondSessionAllow(\\'' + esc(pr.id) + '\\',\\'' + esc(String(pr.session_id)) + '\\',\\'' + esc(pr.tool_name) + '\\',this)">Allow this session</button>';
-    }
+    html += '<button class="btn-session" onclick="respondSessionAllow(\\'' + esc(pr.id) + '\\',\\'' + esc(String(pr.session_id)) + '\\',\\'' + esc(normalizedTool) + '\\',this)">Allow this session</button>';
     html += '<button class="' + allowClass + '" onclick="respond(\\'' + esc(pr.id) + '\\',\\'allow\\',this)">Allow</button>';
     html += '</div>';
   }
@@ -1905,6 +1962,16 @@ async function respond(id, decision, btn, message) {
     const body = {id, decision};
     if (message) body.message = message;
     if (sessionId) body.session_id = sessionId;
+    // For "always" decisions, include the rule to save
+    if (decision === 'always') {
+      const res = await fetch('/api/pending');
+      const data = await res.json();
+      const req = (data.requests || []).find(r => r.id === id);
+      if (req) {
+        const rule = (req.allow_rules && req.allow_rules[0]) || req.allow_rule;
+        if (rule) body.allow_rules = [rule];
+      }
+    }
     await fetch('/api/respond', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -1912,7 +1979,7 @@ async function respond(id, decision, btn, message) {
     });
     respondedIds.add(id);
     if (currentView === 'dashboard') fetchSessions();
-    else fetchSessionDetail();
+    else if (currentView === 'detail') fetchSessionDetail();
   } catch (e) {
     if (btn) btn.textContent = 'Error';
   }
@@ -1922,20 +1989,19 @@ async function respondAlwaysAll(reqId, btn) {
   const card = btn.closest('.perm-card');
   if (card) card.querySelectorAll('button').forEach(b => b.disabled = true);
   btn.textContent = '...';
-  // Get patterns from the session data
   try {
     const res = await fetch('/api/pending');
     const data = await res.json();
     const req = (data.requests || []).find(r => r.id === reqId);
-    const patterns = (req && req.allow_patterns) || [];
+    const rules = (req && req.allow_rules) || [];
     await fetch('/api/respond', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({id: reqId, decision: 'always', allow_patterns: patterns})
+      body: JSON.stringify({id: reqId, decision: 'always', allow_rules: rules})
     });
     respondedIds.add(reqId);
     if (currentView === 'dashboard') fetchSessions();
-    else fetchSessionDetail();
+    else if (currentView === 'detail') fetchSessionDetail();
   } catch (e) {
     btn.textContent = 'Error';
   }
@@ -1988,60 +2054,32 @@ async function submitFeedback(id) {
   } catch (e) {}
 }
 
-function togglePathSelect(reqId) {
-  const area = document.getElementById('path-area-' + reqId);
-  if (!area) return;
-  if (area.style.display !== 'none') { area.style.display = 'none'; return; }
-  // Fetch request data to build path options
-  fetch('/api/pending').then(r => r.json()).then(data => {
-    const req = (data.requests || []).find(r => r.id === reqId);
-    if (!req) return;
-    const filePath = (req.tool_input && req.tool_input.file_path) || '';
-    const projectDir = req.project_dir || '';
-    const toolName = req.tool_name || 'Write';
-    if (!filePath) return;
-    const rel = projectDir && filePath.startsWith(projectDir) ? filePath.slice(projectDir.length).replace(/^\\//, '') : filePath;
-    const parts = rel.split('/').filter(Boolean);
-    const projectName = projectDir.split('/').filter(Boolean).pop() || '';
-    let html = '';
-    const rootPattern = toolName + '(' + projectDir + '/*)';
-    html += '<div class="path-option" onclick="submitPathAllow(\\'' + reqId + '\\',\\'' + esc(rootPattern) + '\\')">';
-    html += '<div class="path-label">' + esc(projectName + '/*') + '</div>';
-    html += '<div class="path-pattern">' + esc(rootPattern) + '</div></div>';
-    let cumPath = projectDir;
-    for (let i = 0; i < parts.length - 1; i++) {
-      cumPath += '/' + parts[i];
-      const displayPath = projectName + '/' + parts.slice(0, i + 1).join('/') + '/*';
-      const pattern = toolName + '(' + cumPath + '/*)';
-      html += '<div class="path-option" onclick="submitPathAllow(\\'' + reqId + '\\',\\'' + esc(pattern) + '\\')">';
-      html += '<div class="path-label">' + esc(displayPath) + '</div>';
-      html += '<div class="path-pattern">' + esc(pattern) + '</div></div>';
-    }
-    area.innerHTML = html;
-    area.style.display = 'block';
-  });
-}
-
-function toggleSplitPatterns(reqId) {
+function toggleSplitRules(reqId) {
   const area = document.getElementById('split-area-' + reqId);
   if (!area) return;
   if (area.style.display !== 'none') { area.style.display = 'none'; return; }
   fetch('/api/pending').then(r => r.json()).then(data => {
     const req = (data.requests || []).find(r => r.id === reqId);
-    if (!req || !req.allow_patterns) return;
+    if (!req || !req.allow_rules) return;
     let html = '';
-    req.allow_patterns.forEach(pat => {
-      html += '<div class="path-option" onclick="submitPathAllow(\\'' + reqId + '\\',\\'' + esc(pat) + '\\')">';
-      html += '<div class="path-label">Allow: <code>' + esc(pat) + '</code></div></div>';
+    req.allow_rules.forEach((rule, i) => {
+      const display = rule.prefix ? rule.tool + ': ' + rule.prefix : rule.tool;
+      html += '<div class="path-option" onclick="submitRuleAllow(\\'' + reqId + '\\',' + i + ')">';
+      html += '<div class="path-label">Allow: <code>' + esc(display) + '</code></div></div>';
     });
     area.innerHTML = html;
     area.style.display = 'block';
   });
 }
 
-async function submitPathAllow(reqId, pattern) {
+async function submitRuleAllow(reqId, ruleIndex) {
   try {
-    const body = {id: reqId, decision: 'always', allow_pattern: pattern};
+    const res = await fetch('/api/pending');
+    const data = await res.json();
+    const req = (data.requests || []).find(r => r.id === reqId);
+    if (!req || !req.allow_rules || !req.allow_rules[ruleIndex]) return;
+    const rule = req.allow_rules[ruleIndex];
+    const body = {id: reqId, decision: 'always', allow_rules: [rule]};
     if (currentSessionId) body.session_id = currentSessionId;
     await fetch('/api/respond', {
       method: 'POST',
@@ -2050,6 +2088,160 @@ async function submitPathAllow(reqId, pattern) {
     });
     respondedIds.add(reqId);
   } catch (e) {}
+}
+
+// ── Permissions Management ──
+
+function showPermissions() {
+  currentView = 'permissions';
+  location.hash = 'permissions';
+  document.getElementById('dashboardView').style.display = 'none';
+  document.getElementById('detailView').style.display = 'none';
+  document.getElementById('permissionsView').style.display = 'block';
+  document.getElementById('backBtn').style.display = 'flex';
+  document.getElementById('scrollBottomBtn').style.display = 'none';
+  document.getElementById('collapseAllBtn').style.display = 'none';
+  document.getElementById('permissionsBtn').style.display = 'none';
+  document.getElementById('pageTitle').textContent = 'Permission Rules';
+  document.getElementById('pageTitle').style.color = '#c4b5fd';
+  stopDetailPolling();
+  fetchPermissions();
+}
+
+async function fetchPermissions() {
+  try {
+    let url = '/api/permissions?';
+    // If we have a current session, include project_dir and session_id
+    if (currentSessionId) {
+      url += 'session_id=' + encodeURIComponent(currentSessionId) + '&';
+    }
+    // Try to get project_dir from session data
+    const sessRes = await fetch('/api/sessions');
+    const sessData = await sessRes.json();
+    const allSessions = sessData.sessions || [];
+    let projectDir = '';
+    if (currentSessionId) {
+      const sess = allSessions.find(s => String(s.session_id) === String(currentSessionId));
+      if (sess) projectDir = sess.cwd || '';
+    }
+    if (projectDir) url += 'project_dir=' + encodeURIComponent(projectDir) + '&';
+    const res = await fetch(url);
+    const data = await res.json();
+    renderPermissions(data, projectDir);
+  } catch (e) {
+    document.getElementById('permissionsContent').innerHTML = '<div style="color:#f87171;padding:20px">Failed to load permissions</div>';
+  }
+}
+
+function renderPermissions(data, projectDir) {
+  const levels = [
+    {key: 'session', label: 'Session', desc: 'Temporary (cleared on session end)', show: !!data.session},
+    {key: 'project', label: 'Project', desc: projectDir ? projectDir.split('/').pop() : 'Per-project rules', show: !!data.project},
+    {key: 'user', label: 'User', desc: '~/.claude/webui-allow.json', show: true},
+    {key: 'repo', label: 'Repo', desc: 'Default rules (shipped with WebUI)', show: true},
+  ];
+  const smartRuleNames = {
+    readonly_tools: 'Auto-allow read-only tools (Read, Glob, Grep)',
+    readonly_bash: 'Auto-allow read-only Bash commands (ls, cat, grep, git log, ...)',
+    project_internal_edit: 'Auto-allow Write/Edit to files inside project directory',
+  };
+  let html = '';
+  for (const level of levels) {
+    if (!level.show) continue;
+    const levelData = data[level.key] || {rules: [], smart_rules: {}};
+    const ruleCount = (levelData.rules || []).length;
+    const smartCount = Object.keys(levelData.smart_rules || {}).length;
+    const totalBadge = ruleCount + smartCount;
+    html += '<div class="perm-level">';
+    html += '<div class="perm-level-header" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\\'none\\'?\\'block\\':\\'none\\'">';
+    html += '<span class="perm-level-title">' + esc(level.label) + ' <span style="font-weight:400;color:#888;font-size:12px">' + esc(level.desc) + '</span></span>';
+    html += '<span class="perm-level-badge">' + totalBadge + ' rule' + (totalBadge !== 1 ? 's' : '') + '</span>';
+    html += '</div>';
+    html += '<div class="perm-level-body">';
+
+    // Pattern rules
+    if (ruleCount > 0) {
+      html += '<div class="perm-section-label">Rules</div>';
+      (levelData.rules || []).forEach((rule, i) => {
+        html += '<div class="perm-rule-row">';
+        html += '<span class="perm-rule-tool">' + esc(rule.tool || '') + '</span>';
+        html += '<span class="perm-rule-prefix">' + esc(rule.prefix || '(any)') + '</span>';
+        html += '<span class="perm-rule-action ' + (rule.action || 'allow') + '">' + esc(rule.action || 'allow') + '</span>';
+        html += '<span class="perm-rule-actions">';
+        // Move buttons
+        const moveTargets = levels.filter(l => l.show && l.key !== level.key);
+        for (const t of moveTargets) {
+          html += '<button onclick="movePermRule(\\'' + level.key + '\\',' + i + ',\\'' + t.key + '\\',\\'' + esc(projectDir) + '\\')">&rarr; ' + esc(t.label) + '</button>';
+        }
+        html += '<button onclick="deletePermRule(\\'' + level.key + '\\',' + i + ',\\'' + esc(projectDir) + '\\')" style="color:#f87171">&times;</button>';
+        html += '</span>';
+        html += '</div>';
+      });
+    }
+
+    // Smart rules
+    html += '<div class="perm-section-label">Smart Rules</div>';
+    for (const [key, desc] of Object.entries(smartRuleNames)) {
+      const current = (levelData.smart_rules || {})[key] || '';
+      html += '<div class="perm-smart-row">';
+      html += '<span class="perm-smart-label">' + esc(desc) + '</span>';
+      const allowCls = current === 'allow' ? 'allow' : 'off';
+      const denyCls = current === 'deny' ? 'deny' : 'off';
+      html += '<button class="perm-smart-toggle ' + allowCls + '" onclick="setSmartRule(\\'' + level.key + '\\',\\'' + key + '\\',\\'' + (current === 'allow' ? '' : 'allow') + '\\',\\'' + esc(projectDir) + '\\')">allow</button>';
+      html += '<button class="perm-smart-toggle ' + denyCls + '" onclick="setSmartRule(\\'' + level.key + '\\',\\'' + key + '\\',\\'' + (current === 'deny' ? '' : 'deny') + '\\',\\'' + esc(projectDir) + '\\')">deny</button>';
+      html += '</div>';
+    }
+
+    // Add rule form
+    html += '<div class="perm-section-label">Add Rule</div>';
+    html += '<div class="perm-add-form" id="add-form-' + level.key + '">';
+    html += '<select id="add-tool-' + level.key + '"><option value="Bash">Bash</option><option value="Write">Write</option><option value="Edit">Edit</option><option value="WebFetch">WebFetch</option><option value="WebSearch">WebSearch</option></select>';
+    html += '<input type="text" id="add-prefix-' + level.key + '" placeholder="prefix (e.g. git commit)">';
+    html += '<select id="add-action-' + level.key + '"><option value="allow">allow</option><option value="deny">deny</option></select>';
+    html += '<button onclick="addPermRule(\\'' + level.key + '\\',\\'' + esc(projectDir) + '\\')">Add</button>';
+    html += '</div>';
+
+    html += '</div></div>';
+  }
+  document.getElementById('permissionsContent').innerHTML = html;
+}
+
+async function addPermRule(level, projectDir) {
+  const tool = document.getElementById('add-tool-' + level).value;
+  const prefix = document.getElementById('add-prefix-' + level).value.trim();
+  const action = document.getElementById('add-action-' + level).value;
+  const rule = {tool, action};
+  if (prefix) rule.prefix = prefix;
+  const body = {level, rule, project_dir: projectDir};
+  if (level === 'session' && currentSessionId) body.session_id = currentSessionId;
+  await fetch('/api/permissions/add-rule', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  fetchPermissions();
+}
+
+async function deletePermRule(level, index, projectDir) {
+  const body = {level, index, project_dir: projectDir};
+  if (level === 'session' && currentSessionId) body.session_id = currentSessionId;
+  await fetch('/api/permissions/remove-rule', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  fetchPermissions();
+}
+
+async function movePermRule(fromLevel, fromIndex, toLevel, projectDir) {
+  const body = {from_level: fromLevel, from_index: fromIndex, to_level: toLevel, project_dir: projectDir};
+  if (currentSessionId) body.session_id = currentSessionId;
+  await fetch('/api/permissions/move-rule', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  fetchPermissions();
+}
+
+async function setSmartRule(level, key, action, projectDir) {
+  const body = {level, key, project_dir: projectDir};
+  if (level === 'session' && currentSessionId) body.session_id = currentSessionId;
+  if (action) {
+    body.action = action;
+    await fetch('/api/permissions/set-smart-rule', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  } else {
+    await fetch('/api/permissions/remove-smart-rule', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  }
+  fetchPermissions();
 }
 
 // ── Prompt ──
@@ -2278,6 +2470,8 @@ document.getElementById('promptInput').addEventListener('paste', function(e) {
   const m = hash.match(/^#session\\/(.+)$/);
   if (m) {
     openSession(m[1]);
+  } else if (hash === '#permissions') {
+    showPermissions();
   } else {
     fetchSessions();
   }
