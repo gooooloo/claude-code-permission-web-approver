@@ -23,36 +23,6 @@
     {
       "tool": "Bash",
       "action": "allow",
-      "prefix": "git branch"
-    },
-    {
-      "tool": "Bash",
-      "action": "allow",
-      "prefix": "git diff"
-    },
-    {
-      "tool": "Bash",
-      "action": "allow",
-      "prefix": "git log"
-    },
-    {
-      "tool": "Bash",
-      "action": "allow",
-      "prefix": "git status"
-    },
-    {
-      "tool": "Bash",
-      "action": "allow",
-      "prefix": "git stash"
-    },
-    {
-      "tool": "Bash",
-      "action": "allow",
-      "prefix": "git tag"
-    },
-    {
-      "tool": "Bash",
-      "action": "allow",
       "prefix": "git fetch"
     },
     {
@@ -74,16 +44,6 @@
       "tool": "Bash",
       "action": "allow",
       "prefix": "git switch"
-    },
-    {
-      "tool": "Bash",
-      "action": "allow",
-      "prefix": "git show"
-    },
-    {
-      "tool": "Bash",
-      "action": "allow",
-      "prefix": "git remote"
     },
     {
       "tool": "Bash",
