@@ -3,6 +3,11 @@
     {
       "tool": "Bash",
       "action": "allow",
+      "prefix": "git add"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
       "prefix": "git checkout"
     },
     {
@@ -18,7 +23,87 @@
     {
       "tool": "Bash",
       "action": "allow",
+      "prefix": "git branch"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "git diff"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "git log"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "git status"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "git stash"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "git tag"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "git fetch"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "git pull"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "git merge"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "git rebase"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "git switch"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "git show"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "git remote"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
       "prefix": "gh pr"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "gh issue"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "gh run"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "gh api"
     }
   ],
   "smart_rules": {
