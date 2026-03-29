@@ -4,6 +4,21 @@
       "tool": "Bash",
       "action": "allow",
       "prefix": "git checkout"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "git commit"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "git push"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "prefix": "gh pr"
     }
   ],
   "smart_rules": {

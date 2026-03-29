@@ -33,7 +33,7 @@ A web UI for Claude Code that replaces default terminal prompts with a browser-b
 - **install.ps1** — Windows installer (PowerShell). Copies hook files and merges hook config into settings.json. Accepts `-Scope Project|Global|All`.
 - **uninstall.sh** — Linux/macOS uninstaller. Reverses install.sh. Flags: `--project`, `--global`, `--daemon`. Depends on `jq`.
 - **uninstall.ps1** — Windows uninstaller (PowerShell). Reverses install.ps1.
-- **dev.sh** — Development helper. Uses `entr` to auto-restart `server.py` when `frontend.py`, `server.py`, or `channel_feishu.py` changes.
+- **dev.sh** — Development helper. Uses `entr` to auto-restart `server.py` when any `*.py` file changes.
 
 ## Running
 
