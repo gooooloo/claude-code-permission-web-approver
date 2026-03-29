@@ -28,6 +28,7 @@ import cgi
 
 from frontend import HTML_PAGE
 from platform_utils import IS_WINDOWS, get_queue_dir, get_image_dir, is_process_alive, is_terminal_alive, find_claude_pid, get_process_children, get_process_name, encode_project_path, send_prompt, send_interrupt
+import permission_rules
 
 try:
     from channel_feishu import start_feishu_channel
@@ -72,10 +73,10 @@ def _get_session_update_lock(sid):
             _session_update_locks[sid] = threading.Lock()
         return _session_update_locks[sid]
 
-# Session-level auto-allow rules: { (session_id, tool_name): True }
+# Session-level auto-allow rules: { session_id: {"rules": [...], "smart_rules": {...}} }
 # These are volatile (in-memory only, cleared on session end/clear/server restart).
 # The hook queries these via GET /api/check-auto-allow.
-# For persistent rules, see settings.local.json (checked directly by the hook).
+# For persistent rules, see the 4-level rule system in permission_rules.py.
 session_auto_allow = {}
 
 
@@ -512,9 +513,7 @@ def zombie_cleanup_loop():
             for sid in dead:
                 del sessions[sid]
                 # Clear auto-allow rules
-                keys_to_remove = [k for k in session_auto_allow if k[0] == sid]
-                for k in keys_to_remove:
-                    del session_auto_allow[k]
+                session_auto_allow.pop(sid, None)
         if dead:
             print(f"[~] Cleaned up {len(dead)} zombie session(s): {dead}")
 
@@ -639,8 +638,35 @@ class WebUIHandler(BaseHTTPRequestHandler):
             params = parse_qs(parsed.query)
             sid = params.get("session_id", [""])[0]
             tname = params.get("tool_name", [""])[0]
-            result = (sid, tname) in session_auto_allow if sid and tname else False
-            self._respond_json({"auto_allow": result})
+            tool_input_str = params.get("tool_input", [""])[0]
+            try:
+                tool_input = json.loads(tool_input_str) if tool_input_str else {}
+            except (json.JSONDecodeError, ValueError):
+                tool_input = {}
+            session_rules = session_auto_allow.get(sid)
+            if session_rules and tname:
+                result = permission_rules.check_level(tname, tool_input, session_rules)
+                self._respond_json({
+                    "auto_allow": result == "allow",
+                    "auto_deny": result == "deny",
+                })
+            else:
+                self._respond_json({"auto_allow": False, "auto_deny": False})
+
+        elif path == "/api/permissions":
+            params = parse_qs(parsed.query)
+            project_dir = params.get("project_dir", [""])[0]
+            sid = params.get("session_id", [""])[0]
+            result = {
+                "repo": permission_rules.load_rules(permission_rules.repo_rules_path()),
+                "user": permission_rules.load_rules(permission_rules.user_rules_path()),
+            }
+            if project_dir:
+                result["project"] = permission_rules.load_rules(
+                    permission_rules.project_rules_path(project_dir))
+            if sid:
+                result["session"] = session_auto_allow.get(sid, {"rules": [], "smart_rules": {}})
+            self._respond_json(result)
 
         elif path == "/api/pending":
             # Legacy endpoint — scan .request.json files
@@ -740,9 +766,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
                     evict = [k for k, v in sessions.items() if k != sid and v.get("terminal_id") == terminal_id]
                     for k in evict:
                         del sessions[k]
-                        keys_to_remove = [ak for ak in session_auto_allow if ak[0] == k]
-                        for ak in keys_to_remove:
-                            del session_auto_allow[ak]
+                        session_auto_allow.pop(k, None)
                     if evict:
                         print(f"[~] Evicted session(s) on terminal {terminal_id}: {evict}")
 
@@ -778,9 +802,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
 
                 if source == "clear":
                     # Clear auto-allow rules
-                    keys_to_remove = [k for k in session_auto_allow if k[0] == sid]
-                    for k in keys_to_remove:
-                        del session_auto_allow[k]
+                    session_auto_allow.pop(sid, None)
                     # Clean up request files for this session
                     for fpath in glob.glob(os.path.join(QUEUE_DIR, "*.request.json")):
                         try:
@@ -809,10 +831,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
 
             with sessions_lock:
                 sessions.pop(sid, None)
-                # Clear auto-allow
-                keys_to_remove = [k for k in session_auto_allow if k[0] == sid]
-                for k in keys_to_remove:
-                    del session_auto_allow[k]
+                session_auto_allow.pop(sid, None)
 
             # Clean up request files
             for fpath in glob.glob(os.path.join(QUEUE_DIR, "*.request.json")):
@@ -862,22 +881,31 @@ class WebUIHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Request not found")
                 return
 
-            # "always" → write to settings.local.json
+            # "always" → write to webui-allow.json (user-level by default)
             if decision == "always":
                 try:
                     with open(request_file) as f:
                         req_data = json.load(f)
-                    settings_file = req_data.get("settings_file", "")
-                    allow_patterns = body.get("allow_patterns") or []
-                    if not allow_patterns:
-                        allow_pattern = body.get("allow_pattern") or req_data.get("allow_pattern", "")
-                        if allow_pattern:
-                            allow_patterns = [allow_pattern]
-                    if settings_file:
-                        for pattern in allow_patterns:
-                            self._add_to_settings(settings_file, pattern)
-                except (json.JSONDecodeError, IOError):
-                    pass
+                    level = body.get("level", "user")
+                    # Accept structured rules from the new UI
+                    allow_rules = body.get("allow_rules") or []
+                    if not allow_rules:
+                        allow_rule = body.get("allow_rule") or req_data.get("allow_rule")
+                        if allow_rule:
+                            allow_rules = [allow_rule]
+                    project_dir = req_data.get("project_dir", "")
+                    if level == "project" and project_dir:
+                        target_path = permission_rules.project_rules_path(project_dir)
+                    elif level == "repo":
+                        target_path = permission_rules.repo_rules_path()
+                    else:
+                        target_path = permission_rules.user_rules_path()
+                    for rule in allow_rules:
+                        if isinstance(rule, dict) and rule.get("tool"):
+                            permission_rules.add_rule(target_path, rule)
+                            print(f"[+] Added rule to {level}: {rule}")
+                except (json.JSONDecodeError, IOError) as e:
+                    print(f"[!] Failed to save always-allow rule: {e}")
 
             response_file = os.path.join(QUEUE_DIR, f"{request_id}.response.json")
             resp_data = {"decision": decision}
@@ -885,6 +913,10 @@ class WebUIHandler(BaseHTTPRequestHandler):
                 resp_data["message"] = message
             with open(response_file, "w") as f:
                 json.dump(resp_data, f)
+
+            # "always" added a new rule — recheck other pending requests
+            if decision == "always":
+                self._recheck_pending_requests()
 
             self._respond_json({"ok": True})
 
@@ -912,14 +944,19 @@ class WebUIHandler(BaseHTTPRequestHandler):
                 return
 
             if sid and tool_name:
-                session_auto_allow[(sid, tool_name)] = True
-                print(f"[+] Session auto-allow: {tool_name} for session {sid}")
+                if sid not in session_auto_allow:
+                    session_auto_allow[sid] = {"rules": [], "smart_rules": {}}
+                rule = body.get("rule") or {"tool": tool_name, "action": "allow"}
+                session_auto_allow[sid]["rules"].append(rule)
+                print(f"[+] Session auto-allow: {rule} for session {sid}")
             if request_id:
                 resp_file = os.path.join(QUEUE_DIR, f"{request_id}.response.json")
                 req_file = os.path.join(QUEUE_DIR, f"{request_id}.request.json")
                 if os.path.exists(req_file):
                     with open(resp_file, "w") as f:
                         json.dump({"decision": "allow"}, f)
+            # Recheck other pending requests that may now match the new session rule
+            self._recheck_pending_requests()
             self._respond_json({"ok": True})
 
         elif path == "/api/send-prompt":
@@ -1018,9 +1055,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
                 self.send_error(400, "Missing session_id")
                 return
             # Clear auto-allow
-            keys_to_remove = [k for k in session_auto_allow if k[0] == sid]
-            for k in keys_to_remove:
-                del session_auto_allow[k]
+            session_auto_allow.pop(sid, None)
             print(f"[*] Session reset (legacy): session={sid} source={source}")
             self._respond_json({"ok": True})
 
@@ -1032,10 +1067,129 @@ class WebUIHandler(BaseHTTPRequestHandler):
                 return
             with sessions_lock:
                 sessions.pop(sid, None)
-            keys_to_remove = [k for k in session_auto_allow if k[0] == sid]
-            for k in keys_to_remove:
-                del session_auto_allow[k]
+            session_auto_allow.pop(sid, None)
             print(f"[*] Session end (legacy): session={sid}")
+            self._respond_json({"ok": True})
+
+        # ── Permission management endpoints ──
+
+        elif path == "/api/permissions/add-rule":
+            body = self._read_json()
+            level = body.get("level", "user")
+            rule = body.get("rule", {})
+            project_dir = body.get("project_dir", "")
+            sid = body.get("session_id", "")
+            if not rule.get("tool"):
+                self.send_error(400, "Missing rule.tool")
+                return
+            if level == "session" and sid:
+                if sid not in session_auto_allow:
+                    session_auto_allow[sid] = {"rules": [], "smart_rules": {}}
+                session_auto_allow[sid]["rules"].append(rule)
+            else:
+                target = self._get_rules_path(level, project_dir)
+                permission_rules.add_rule(target, rule)
+            self._recheck_pending_requests()
+            self._respond_json({"ok": True})
+
+        elif path == "/api/permissions/remove-rule":
+            body = self._read_json()
+            level = body.get("level", "user")
+            index = body.get("index", -1)
+            project_dir = body.get("project_dir", "")
+            sid = body.get("session_id", "")
+            if level == "session" and sid:
+                rules = session_auto_allow.get(sid, {}).get("rules", [])
+                if 0 <= index < len(rules):
+                    rules.pop(index)
+            else:
+                target = self._get_rules_path(level, project_dir)
+                permission_rules.remove_rule(target, index)
+            self._recheck_pending_requests()
+            self._respond_json({"ok": True})
+
+        elif path == "/api/permissions/update-rule":
+            body = self._read_json()
+            level = body.get("level", "user")
+            index = body.get("index", -1)
+            rule = body.get("rule", {})
+            project_dir = body.get("project_dir", "")
+            sid = body.get("session_id", "")
+            if level == "session" and sid:
+                rules = session_auto_allow.get(sid, {}).get("rules", [])
+                if 0 <= index < len(rules):
+                    rules[index] = rule
+            else:
+                target = self._get_rules_path(level, project_dir)
+                permission_rules.update_rule(target, index, rule)
+            self._recheck_pending_requests()
+            self._respond_json({"ok": True})
+
+        elif path == "/api/permissions/move-rule":
+            body = self._read_json()
+            from_level = body.get("from_level", "")
+            from_index = body.get("from_index", -1)
+            to_level = body.get("to_level", "")
+            project_dir = body.get("project_dir", "")
+            sid = body.get("session_id", "")
+            if from_level == "session" and sid:
+                rules = session_auto_allow.get(sid, {}).get("rules", [])
+                if 0 <= from_index < len(rules):
+                    rule = rules.pop(from_index)
+                    target = self._get_rules_path(to_level, project_dir)
+                    permission_rules.add_rule(target, rule)
+            elif to_level == "session" and sid:
+                source = self._get_rules_path(from_level, project_dir)
+                data = permission_rules.load_rules(source)
+                if 0 <= from_index < len(data["rules"]):
+                    rule = data["rules"][from_index]
+                    permission_rules.remove_rule(source, from_index)
+                    if sid not in session_auto_allow:
+                        session_auto_allow[sid] = {"rules": [], "smart_rules": {}}
+                    session_auto_allow[sid]["rules"].append(rule)
+            else:
+                source = self._get_rules_path(from_level, project_dir)
+                target = self._get_rules_path(to_level, project_dir)
+                permission_rules.move_rule(source, from_index, target)
+            self._recheck_pending_requests()
+            self._respond_json({"ok": True})
+
+        elif path == "/api/permissions/set-smart-rule":
+            body = self._read_json()
+            level = body.get("level", "user")
+            key = body.get("key", "")
+            action = body.get("action", "allow")
+            project_dir = body.get("project_dir", "")
+            sid = body.get("session_id", "")
+            if not key:
+                self.send_error(400, "Missing key")
+                return
+            if level == "session" and sid:
+                if sid not in session_auto_allow:
+                    session_auto_allow[sid] = {"rules": [], "smart_rules": {}}
+                session_auto_allow[sid]["smart_rules"][key] = action
+            else:
+                target = self._get_rules_path(level, project_dir)
+                permission_rules.set_smart_rule(target, key, action)
+            self._recheck_pending_requests()
+            self._respond_json({"ok": True})
+
+        elif path == "/api/permissions/remove-smart-rule":
+            body = self._read_json()
+            level = body.get("level", "user")
+            key = body.get("key", "")
+            project_dir = body.get("project_dir", "")
+            sid = body.get("session_id", "")
+            if not key:
+                self.send_error(400, "Missing key")
+                return
+            if level == "session" and sid:
+                sr = session_auto_allow.get(sid, {}).get("smart_rules", {})
+                sr.pop(key, None)
+            else:
+                target = self._get_rules_path(level, project_dir)
+                permission_rules.remove_smart_rule(target, key)
+            self._recheck_pending_requests()
             self._respond_json({"ok": True})
 
         else:
@@ -1059,26 +1213,49 @@ class WebUIHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(html.encode())
 
-    def _add_to_settings(self, settings_file, pattern):
-        """Add an allow pattern to settings.local.json."""
-        try:
-            if os.path.exists(settings_file):
-                with open(settings_file) as f:
-                    settings = json.load(f)
-            else:
-                settings = {"permissions": {"allow": []}}
-            if "permissions" not in settings:
-                settings["permissions"] = {"allow": []}
-            if "allow" not in settings["permissions"]:
-                settings["permissions"]["allow"] = []
-            if pattern not in settings["permissions"]["allow"]:
-                settings["permissions"]["allow"].append(pattern)
-                with open(settings_file, "w") as f:
-                    json.dump(settings, f, indent=2)
-                    f.write("\n")
-                print(f"[+] Added to allowlist: {pattern}")
-        except (json.JSONDecodeError, IOError) as e:
-            print(f"[!] Failed to update settings: {e}")
+    def _get_rules_path(self, level, project_dir=""):
+        """Get the file path for a given rule level."""
+        if level == "repo":
+            return permission_rules.repo_rules_path()
+        elif level == "project" and project_dir:
+            return permission_rules.project_rules_path(project_dir)
+        else:
+            return permission_rules.user_rules_path()
+
+    def _recheck_pending_requests(self):
+        """Re-evaluate pending permission requests against current rules.
+
+        Called after any rule mutation.  If a pending request now matches
+        an allow or deny rule, auto-write the response file so the hook
+        (which is polling) picks it up immediately.
+        """
+        for fpath in glob.glob(os.path.join(QUEUE_DIR, "*.request.json")):
+            resp_path = fpath.replace(".request.json", ".response.json")
+            if os.path.exists(resp_path):
+                continue
+            try:
+                with open(fpath) as f:
+                    req = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                continue
+
+            tool_name = req.get("tool_name", "")
+            tool_input = req.get("tool_input", {})
+            project_dir = req.get("project_dir", "")
+            sid = str(req.get("session_id", ""))
+
+            session_rules = session_auto_allow.get(sid)
+            result = permission_rules.resolve(
+                tool_name, tool_input, project_dir, session_rules=session_rules)
+
+            if result == "allow":
+                with open(resp_path, "w") as f:
+                    json.dump({"decision": "allow"}, f)
+                print(f"[+] Auto-resolved pending request (allow): {tool_name}")
+            elif result == "deny":
+                with open(resp_path, "w") as f:
+                    json.dump({"decision": "deny", "message": "Denied by updated rule"}, f)
+                print(f"[-] Auto-resolved pending request (deny): {tool_name}")
 
 
 def _restore_sessions_from_terminal_mappings():

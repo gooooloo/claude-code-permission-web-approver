@@ -17,9 +17,11 @@ A web UI for Claude Code that replaces default terminal prompts with a browser-b
 
 ## Architecture
 
-- **server.py** — Python HTTP server (port 19836). Session registry, transcript incremental parser, multi-session dashboard UI, API endpoints. Background thread for zombie session cleanup. Stores volatile session-level auto-allow rules in memory (queried by hook via API).
-- **frontend.py** — Extracted HTML/CSS/JS for the dashboard UI. Imported by server.py.
-- **hook-permission-request.py** — `PermissionRequest` hook. All auto-allow decision logic is centralized here (persistent rules, smart rules, session rules via server API query). Falls back to auto-allow if server is offline. If nothing matches, queues a request JSON and polls for response.
+- **server.py** — Python HTTP server (port 19836). Session registry, transcript incremental parser, multi-session dashboard UI, API endpoints. Background thread for zombie session cleanup. Stores volatile session-level auto-allow rules in memory. Serves permission management API.
+- **frontend.py** — Extracted HTML/CSS/JS for the dashboard UI. Imported by server.py. Includes permissions management page.
+- **permission_rules.py** — 4-level auto-allow rule engine (repo/user/project/session). Pattern matching, smart rule evaluation, CRUD operations. Used by both the hook and server.
+- **auto-allow.json** — Repo-level default rules. Ships smart rules (readonly_tools, readonly_bash, project_internal_edit) as defaults.
+- **hook-permission-request.py** — `PermissionRequest` hook. Checks repo/user/project rules locally via `permission_rules.resolve()`, queries server for session rules, falls back to auto-allow if server is offline. If nothing matches, queues a request JSON and polls for response.
 - **hook-session-start.py** — `SessionStart` hook. Discovers transcript path, POSTs to `/api/session/register` with `terminal_id` (tmux pane ID on Linux, shell PID on Windows), `tmux_socket` (Linux only), cwd, and source.
 - **hook-session-end.py** — `SessionEnd` hook. POSTs to `/api/session/deregister`, local fallback cleanup of request files.
 - **platform_utils.py** — Cross-platform utilities. OS detection, temp directory paths, process tree walking (via `/proc` on Linux, `CreateToolhelp32Snapshot` on Windows), path encoding.
@@ -66,7 +68,7 @@ python3 server.py --lan    # bind 0.0.0.0 for LAN access
 
 No build step, no linter.
 
-**Testing:** `python3 -m pytest tests/ -v` — 103 tests covering core logic (platform_utils, permission rules, server state derivation). Run tests after any code change to these modules.
+**Testing:** `python3 -m pytest tests/ -v` — 112 tests covering core logic (platform_utils, permission rules, server state derivation). Run tests after any code change to these modules.
 
 **Linux/macOS deps:** Python 3, `jq` (install/uninstall scripts), Bash (install scripts). Optional: `entr` (dev.sh), `inotify-tools` (--daemon).
 
@@ -74,24 +76,46 @@ No build step, no linter.
 
 ## Key Conventions
 
-### Auto-Allow Tiers
-All auto-allow logic lives in `hook-permission-request.py`. Checked in order, first match wins:
+### Auto-Allow System
+Permission auto-allow uses a 4-level rule engine (`permission_rules.py`) plus tmux/offline fallbacks in the hook.
 
-| Tier | Name | Where it lives | Lifetime | Example |
-|------|------|---------------|----------|---------|
-| 1 | Persistent rules | `.claude/settings.local.json` | Survives restarts | `Bash(git commit:*)` |
-| 2 | Smart rules | Hook code | Always on | Read-only tools, read-only Bash, project-internal edits |
-| 3 | Tmux allowlist | Hook code | Always on | `tmux send-keys` (used by WebUI prompt delivery) |
-| 4 | Session rules | Server memory, queried via `GET /api/check-auto-allow` | Until session end/clear/restart | User clicks "Allow for session" in UI |
-| 5 | Server offline | Hook code | Fallback | Server unreachable → allow everything |
+**4-level rules** (priority: session > project > user > repo, first match wins):
 
-**Why session rules live on the server, not the hook:** The hook is a short-lived process (runs once per permission request, then exits). It has no persistent memory. Session rules need to survive across multiple hook invocations within a session, so they're stored in the server's memory and queried via API. They can't be written to a file by the hook because the server manages their lifecycle (cleared on session end, clear, zombie cleanup, pane eviction).
+| Level | Storage | Lifetime |
+|-------|---------|----------|
+| Repo | `auto-allow.json` (in webui repo) | Git tracked, ships defaults |
+| User | `~/.claude/webui-allow.json` | Survives restarts, default write target |
+| Project | `<project>/.claude/webui-allow.json` | Per-project |
+| Session | Server memory | Until session end/clear/restart |
 
-### Allow Pattern Format
-Patterns in `settings.local.json` (tier 1) use `ToolName(pattern)` format with glob matching:
-- `Bash(git commit:*)` — `:*` suffix means "starts with"
-- `Write(/some/path/*)` — directory-scoped write permission
-- `Read`, `WebFetch` — tool-level blanket allow
+Within each level, pattern rules are checked before smart rules.
+
+**Additional hook tiers** (after 4-level rules):
+- Tmux allowlist — `tmux` commands auto-allowed (for WebUI prompt delivery)
+- Session rules — queried via `GET /api/check-auto-allow` (server evaluates session-level)
+- Server offline — if server unreachable, allow everything
+
+**Why session rules live on the server, not the hook:** The hook is a short-lived process (runs once per permission request, then exits). It has no persistent memory. Session rules need to survive across multiple hook invocations within a session, so they're stored in the server's memory and queried via API.
+
+### Rule Format
+Rules use a simplified JSON format (not Claude Code's `ToolName(pattern)` format):
+```json
+{
+  "rules": [
+    {"tool": "Bash", "prefix": "git commit", "action": "allow"},
+    {"tool": "Write", "action": "allow"}
+  ],
+  "smart_rules": {
+    "readonly_tools": "allow",
+    "readonly_bash": "allow",
+    "project_internal_edit": "allow"
+  }
+}
+```
+- **Bash rules**: match by command prefix (`git commit` matches `git commit -m 'test'`)
+- **Other tools**: match by tool name only; optional `prefix` field for Write/Edit path matching
+- **Smart rules**: `"allow"` or `"deny"` — configurable per level
+- **Compound Bash**: split on `&&|;||`, ALL parts must be allowed
 
 ### Python Escape Sequences in server.py
 `HTML_PAGE` is a `"""` triple-quoted string containing inline JS. Python processes escape sequences inside it:
@@ -149,12 +173,19 @@ Queue dir: `/tmp/claude-webui` (Linux/macOS) or `%TEMP%\claude-webui` (Windows).
 | GET | `/api/sessions` | All sessions with transcript-derived state |
 | GET | `/api/session/<id>/transcript` | Parsed transcript entries |
 | GET | `/api/check-auto-allow` | Check session auto-allow rules (used by hook) |
+| GET | `/api/permissions` | Get all 4 levels of permission rules |
 | GET | `/api/pending` | Pending permission requests |
 | GET | `/api/image?path=` | Serve uploaded images |
 | POST | `/api/session/register` | Register/update session |
 | POST | `/api/session/deregister` | Deregister session |
-| POST | `/api/respond` | Approve/deny permission |
-| POST | `/api/session-allow` | Session-level auto-allow |
+| POST | `/api/respond` | Approve/deny permission (writes to user-level rules on "always") |
+| POST | `/api/session-allow` | Add session-level auto-allow rule |
+| POST | `/api/permissions/add-rule` | Add a rule to any level |
+| POST | `/api/permissions/remove-rule` | Remove a rule by index |
+| POST | `/api/permissions/update-rule` | Update a rule at index |
+| POST | `/api/permissions/move-rule` | Move a rule between levels |
+| POST | `/api/permissions/set-smart-rule` | Set a smart rule at any level |
+| POST | `/api/permissions/remove-smart-rule` | Remove a smart rule |
 | POST | `/api/send-prompt` | Send prompt via tmux/console |
 | POST | `/api/upload-image` | Upload image |
 | POST | `/api/session-reset` | Clear session auto-allow rules (legacy) |

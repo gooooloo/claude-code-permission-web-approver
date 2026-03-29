@@ -43,3 +43,21 @@ def import_hook_module(name):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+@pytest.fixture
+def tmp_rules_file(tmp_path):
+    """Provide a factory that creates a temporary webui-allow.json file."""
+    def _write(rules=None, smart_rules=None, subdir=None):
+        if subdir:
+            path = tmp_path / subdir / "webui-allow.json"
+        else:
+            path = tmp_path / "webui-allow.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "rules": rules or [],
+            "smart_rules": smart_rules or {},
+        }
+        path.write_text(json.dumps(data))
+        return str(path)
+    return _write

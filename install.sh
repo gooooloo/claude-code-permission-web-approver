@@ -118,7 +118,7 @@ install_symlinks() {
   for old_script in permission-request.py session-start.py session-end.py permission-request.sh post-tool-use.sh stop.sh user-prompt-submit.sh session-start.sh session-end.sh; do
     [ -L "$HOOKS_DIR/$old_script" ] && rm -f "$HOOKS_DIR/$old_script"
   done
-  for script in hook-permission-request.py hook-session-start.py hook-session-end.py; do
+  for script in hook-permission-request.py hook-session-start.py hook-session-end.py permission_rules.py platform_utils.py auto-allow.json; do
     ln -sf "$SHARED_DIR/$script" "$HOOKS_DIR/$script"
   done
   echo "Symlinked hooks to: $HOOKS_DIR"

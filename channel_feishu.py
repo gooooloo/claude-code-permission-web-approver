@@ -294,7 +294,11 @@ def _build_permission_card(request_id, data):
     detail_sub = data.get("detail_sub", "")
     project_dir = data.get("project_dir", "")
     session_id = data.get("session_id", "")
-    allow_pattern = data.get("allow_pattern", "")
+    allow_rule = data.get("allow_rule", {})
+    allow_display = data.get("allow_pattern", "")
+    if not allow_display and allow_rule:
+        prefix = allow_rule.get("prefix", "")
+        allow_display = f"{allow_rule.get('tool', '')}: {prefix}" if prefix else allow_rule.get("tool", "")
 
     elements = []
 
@@ -319,10 +323,10 @@ def _build_permission_card(request_id, data):
 
     elements.append({"tag": "hr"})
 
-    if allow_pattern:
+    if allow_display:
         elements.append({
             "tag": "markdown",
-            "content": f"Pattern: `{allow_pattern}`"
+            "content": f"Rule: `{allow_display}`"
         })
 
     elements.append({
@@ -847,30 +851,24 @@ def _send_text_to_user(open_id, text):
     _client.im.v1.message.create(request)
 
 
-# ── Settings helper (for "Always Allow") ──
+# ── Permission rule helper (for "Always Allow") ──
 
-def _add_to_settings(settings_file, pattern):
-    """Add an allow pattern to settings.local.json."""
+def _save_always_allow_rule(req_data):
+    """Save allow rule(s) to user-level webui-allow.json from a permission request."""
+    import permission_rules
     try:
-        if os.path.exists(settings_file):
-            with open(settings_file) as f:
-                settings = json.load(f)
-        else:
-            settings = {"permissions": {"allow": []}}
-
-        if "permissions" not in settings:
-            settings["permissions"] = {"allow": []}
-        if "allow" not in settings["permissions"]:
-            settings["permissions"]["allow"] = []
-
-        if pattern not in settings["permissions"]["allow"]:
-            settings["permissions"]["allow"].append(pattern)
-            with open(settings_file, "w") as f:
-                json.dump(settings, f, indent=2)
-                f.write("\n")
-            print(f"[feishu] Added to allowlist: {pattern}")
-    except (json.JSONDecodeError, IOError) as e:
-        print(f"[feishu] Failed to update settings: {e}")
+        allow_rules = req_data.get("allow_rules") or []
+        if not allow_rules:
+            allow_rule = req_data.get("allow_rule")
+            if allow_rule:
+                allow_rules = [allow_rule]
+        target_path = permission_rules.user_rules_path()
+        for rule in allow_rules:
+            if isinstance(rule, dict) and rule.get("tool"):
+                permission_rules.add_rule(target_path, rule)
+                print(f"[feishu] Added rule to user-level: {rule}")
+    except Exception as e:
+        print(f"[feishu] Failed to save rule: {e}")
 
 
 def _extract_first_user_prompt(entries):
@@ -1201,15 +1199,7 @@ def _handle_permission_action(request_id, decision, value):
         return P2CardActionTriggerResponse({"toast": {"type": "error", "content": "Write failed"}})
 
     if decision == "always":
-        settings_file = req_data.get("settings_file", "")
-        if settings_file and "/.claude/" in settings_file:
-            allow_patterns = req_data.get("allow_patterns") or []
-            if not allow_patterns:
-                allow_pattern = req_data.get("allow_pattern", "")
-                if allow_pattern:
-                    allow_patterns = [allow_pattern]
-            for pattern in allow_patterns:
-                _add_to_settings(settings_file, pattern)
+        _save_always_allow_rule(req_data)
 
     # Update the permission card to show resolved state (no buttons)
     with _lock:
